@@ -1,13 +1,13 @@
 #![deny(warnings)]
 
 use lazy_static::lazy_static;
-use std::sync::RwLock;
-///, any::Any, io::{self}};
-use std::{collections::vec_deque::VecDeque, sync::Arc};
 use std::error::Error;
 use std::io;
+use std::sync::Mutex;
+///, any::Any, io::{self}};
+use std::{collections::vec_deque::VecDeque, sync::Arc};
 use wasi_common::WasiCtx; // , WasiFile, file::FileType
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Func};
 use wasmtime_wasi::sync::WasiCtxBuilder;
 // use wasi_common::ErrorExt;
 use wasi_common::pipe::{ReadPipe, WritePipe};
@@ -50,15 +50,15 @@ pub struct MemoryLimits {
     pub max_table_elements: u32,
 }
 pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
-    let input = Input {
-        script: "Hello World".to_string(),
-    };
+    // let input = Input {
+    //     script: "Hello World".to_string(),
+    // };
     // let stdin = WasmFileInputBuffer(format!("{}\n", input.to_string()?).as_bytes().to_vec());
     // let stdin = ReadPipe::from(format!("{}\n", input.to_string()?));
-    let mut stdin = InputReader::new();
-    stdin.write(format!("{}\n", input.to_string()?).as_bytes());
+    let mut stdin = StdinPipe::new();
+    // stdin.write_line(&input.to_string()?)?;
     // let stdout = WritePipe::new_in_memory();
-    let mut stdout =OutputWriter::new();
+    let mut stdout = StdoutPipe::new();
     // A `Store` is what will own instances, functions, globals, etc. All wasm
     // items are stored within a `Store`, and it's what we'll always be using to
     // interact with the wasm world. Custom data can be stored in stores but for
@@ -69,7 +69,7 @@ pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
             // TODO: we don't want to inherit stdio
             wasi: WasiCtxBuilder::new()
                 .stdin(Box::new(ReadPipe::new(stdin.clone())))
-                .stdout(Box::new( WritePipe::new(stdout.clone())))
+                .stdout(Box::new(WritePipe::new(stdout.clone())))
                 // .inherit_stdin()
                 // .inherit_stdout()
                 .inherit_stderr()
@@ -86,63 +86,65 @@ pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
     // With a compiled `Module` we can then instantiate it, creating
     // Using the linker to instantiate it lets us make functions available by name
     let instance = WASM_LINKER.instantiate(&mut store, &WASM_MODULE)?;
-    let start = instance
-        .get_func(&mut store, "_start")
-        .expect("Missing _start fn in WASM module");
+    let run = instance
+        .get_func(&mut store, "run")
+        .expect("Missing \"run\" fn in WASM module");
 
     store.add_fuel(fuel)?;
-    start.call(&mut store, &mut [], &mut [])?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
 
-    // drop(store);
-    // let contents = String::from_utf8(stdout.try_into_inner().expect("sole remaining reference to WritePipe").into_inner())?;
+    // store.add_fuel(fuel)?;
+    // run.call(&mut store, &mut [], &mut [])?;
+
+    // stdin.write_line(&input.to_string()?)?;
+    // run.call(&mut store, &mut [], &mut [])?;
+    // run.call(&mut store, &mut [], &mut [])?;
     // let contents = String::from_utf8(
     //     stdout
     //         // .try_into_inner()
     //         // .expect("sole remaining reference to WritePipe")
-    //         .read_all(),
-    // );
+    //         .read_all()?,
+    // )?;
     // println!("contents of stdout: {:?}", contents);
-    // stdin.write(format!("{}\n", input.to_string()?).as_bytes());
-    // start.call(&mut store, &mut [], &mut [])?;
-    // start.call(&mut store, &mut [], &mut [])?;
-    let contents = String::from_utf8(
-        stdout
-            // .try_into_inner()
-            // .expect("sole remaining reference to WritePipe")
-            .read_all(),
-    );
-    println!("contents of stdout: {:?}", contents);
     Ok(())
 }
 
-// TODO: compare io::Cursor::new(vec![]) vs. VecDeque<u8>
-#[derive(Debug)]
-struct OutputWriter(Arc<RwLock<VecDeque<u8>>>);
+pub struct StdoutPipe(Arc<Mutex<VecDeque<u8>>>);
 
-impl Clone for OutputWriter{
+impl Clone for StdoutPipe {
     fn clone(&self) -> Self {
-        Self (self.0.clone())
+        Self(self.0.clone())
     }
 }
 
-impl OutputWriter {
-    fn new() -> OutputWriter {
-        OutputWriter(Arc::new(RwLock::new(VecDeque::new())))
+impl StdoutPipe {
+    fn new() -> StdoutPipe {
+        StdoutPipe(Arc::new(Mutex::new(VecDeque::new())))
     }
-    fn read_all(&mut self) -> Vec<u8> {
-        RwLock::write(&self.0).expect("Failed to get lock").drain(..).into_iter().collect()
+    fn read_all(&mut self) -> io::Result<Vec<u8>> {
+        match self.0.lock() {
+            Ok(mut inner) => Ok(inner.drain(..).into_iter().collect()),
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Unable to get lock",
+            )),
+        }
     }
 }
-impl io::Write for OutputWriter {
+impl io::Write for StdoutPipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match RwLock::write(&self.0){
+        match self.0.lock() {
             Ok(mut inner) => {
                 inner.extend(buf);
                 Ok(buf.len())
             }
-            Err(_) => {
-                Ok(0)
-            }
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Unable to get lock",
+            )),
         }
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -150,40 +152,66 @@ impl io::Write for OutputWriter {
     }
 }
 
+pub struct StdinPipe(Arc<Mutex<VecDeque<u8>>>);
 
-// TODO: compare io::Cursor::new(vec![]) vs. VecDeque<u8>
-#[derive(Debug)]
-struct InputReader(Arc<RwLock<VecDeque<u8>>>);
-
-impl Clone for InputReader{
+impl Clone for StdinPipe {
     fn clone(&self) -> Self {
-        Self (self.0.clone())
+        Self(self.0.clone())
     }
 }
 
-impl InputReader {
-    fn new() -> InputReader {
-        InputReader(Arc::new(RwLock::new(VecDeque::new())))
+impl StdinPipe {
+    fn new() -> StdinPipe {
+        StdinPipe(Arc::new(Mutex::new(VecDeque::new())))
     }
-    fn write(&mut self, bytes: &[u8]) {
-        RwLock::write(&self.0).expect("Failed to get lock").extend(bytes);
+    fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+        match self.0.lock() {
+            Ok(mut inner) => {
+                inner.extend(bytes);
+                Ok(())
+            }
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Unable to get lock",
+            )),
+        }
+    }
+    fn write_str(&mut self, str: &str) -> io::Result<()> {
+        self.write(str.as_bytes())
+    }
+    fn write_line(&mut self, str: &str) -> io::Result<()> {
+        self.write_str(&format!("{}\n", str))
     }
 }
-impl io::Read for InputReader {
+impl io::Read for StdinPipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match RwLock::write(&self.0){
+        match self.0.lock() {
             Ok(mut inner) => {
                 let byte_len = buf.len().min(inner.len());
-                // if byte_len == 0 && buf.len() != 0 {
-                //     return Err(io::Error::new(io::ErrorKind::WouldBlock, "No more data"));
-                // }
                 let bytes: Vec<u8> = inner.drain(..byte_len).into_iter().collect();
                 buf[..byte_len].copy_from_slice(&bytes[..byte_len]);
                 Ok(byte_len)
             }
-            Err(_) => {
-                Err(io::Error::new(io::ErrorKind::WouldBlock, "Unable to get lock"))
-            }
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Unable to get lock",
+            )),
         }
     }
+}
+
+pub fn run_in_sandbox<T>(store: &mut Store<T>, run: &Func, stdin: &mut StdinPipe, stdout: &mut StdoutPipe, script: &str) -> Result<(), Box<dyn Error>> {
+    let input = Input {
+        script: script.to_string()
+    };
+    stdin.write_line(&input.to_string()?)?;
+    run.call(store, &mut [], &mut [])?;
+    let contents = String::from_utf8(
+        stdout
+            // .try_into_inner()
+            // .expect("sole remaining reference to WritePipe")
+            .read_all()?,
+    )?;
+    println!("contents of stdout: {:?}", contents);
+    Ok(())
 }

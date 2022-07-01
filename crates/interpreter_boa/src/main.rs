@@ -6,6 +6,16 @@ use std::io::prelude::*;
 use std::io::stdin;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    run_internal()
+}
+
+#[no_mangle]
+pub fn run() -> () {
+    run_internal().unwrap()
+}
+
+
+fn run_internal() -> Result<(), Box<dyn Error>> {
     for line in stdin().lock().lines() {
         let line = line?;
         let input = Input::from_str(&line)?;
