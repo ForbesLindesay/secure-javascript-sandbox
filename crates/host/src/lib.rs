@@ -112,7 +112,7 @@ pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub struct StdoutPipe(Arc<Mutex<VecDeque<u8>>>);
+struct StdoutPipe(Arc<Mutex<VecDeque<u8>>>);
 
 impl Clone for StdoutPipe {
     fn clone(&self) -> Self {
@@ -152,7 +152,7 @@ impl io::Write for StdoutPipe {
     }
 }
 
-pub struct StdinPipe(Arc<Mutex<VecDeque<u8>>>);
+struct StdinPipe(Arc<Mutex<VecDeque<u8>>>);
 
 impl Clone for StdinPipe {
     fn clone(&self) -> Self {
@@ -200,7 +200,7 @@ impl io::Read for StdinPipe {
     }
 }
 
-pub fn run_in_sandbox<T>(store: &mut Store<T>, run: &Func, stdin: &mut StdinPipe, stdout: &mut StdoutPipe, script: &str) -> Result<(), Box<dyn Error>> {
+fn run_in_sandbox<T>(store: &mut Store<T>, run: &Func, stdin: &mut StdinPipe, stdout: &mut StdoutPipe, script: &str) -> Result<(), Box<dyn Error>> {
     let input = Input {
         script: script.to_string()
     };
