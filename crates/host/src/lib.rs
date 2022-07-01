@@ -91,10 +91,10 @@ pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
         .expect("Missing \"run\" fn in WASM module");
 
     store.add_fuel(fuel)?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "hello world")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "var x = 1;x")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
+    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
 
     // store.add_fuel(fuel)?;
     // run.call(&mut store, &mut [], &mut [])?;

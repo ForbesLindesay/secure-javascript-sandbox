@@ -6,4 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+boa_engine = { version = "0.15.0", features = [] }
+lazy_static = "1.4.0"
 secure_js_sandbox_protocol = { version = "0.1.0" }
