@@ -49,66 +49,75 @@ pub struct MemoryLimits {
     pub max_bytes: usize,
     pub max_table_elements: u32,
 }
+
+pub struct JsSandboxContext {
+    store: Store<StoreState>,
+    stdin: StdinPipe,
+    stdout: StdoutPipe,
+    stderr: StdoutPipe,
+    run: Func,
+}
+
+impl JsSandboxContext {
+    pub fn new(limits: &MemoryLimits) -> JsSandboxContext {
+        let stdin = StdinPipe::new();
+        let stdout = StdoutPipe::new();
+        let stderr = StdoutPipe::new();
+
+        let mut store = Store::new(
+            &WASM_ENGINE,
+            StoreState {
+                // TODO: we don't want to inherit stdio
+                wasi: WasiCtxBuilder::new()
+                    .stdin(Box::new(ReadPipe::new(stdin.clone())))
+                    .stdout(Box::new(WritePipe::new(stdout.clone())))
+                    .stderr(Box::new(WritePipe::new(stderr.clone())))
+                    .build(),
+                limits: StoreLimitsBuilder::new()
+                    .memory_size(limits.max_bytes)
+                    .table_elements(limits.max_table_elements)
+                    .build(),
+            },
+        );
+        store.limiter(|s| &mut s.limits);
+        let instance = WASM_LINKER.instantiate(&mut store, &WASM_MODULE).unwrap();
+        let run = instance
+            .get_func(&mut store, "run")
+            .expect("Missing \"run\" fn in WASM module");
+
+        JsSandboxContext { store, stdin, stdout, stderr, run }
+    }
+    pub fn add_fuel(&mut self, fuel: u64) -> Result<(), Box<dyn Error>> {
+        Ok(self.store.add_fuel(fuel)?)
+    }
+    pub fn run(&mut self, script: &str) -> Result<(), Box<dyn Error>> {
+        let input = Input {
+            script: script.to_string()
+        };
+        self.stdin.write_line(&input.to_string()?)?;
+        self.run.call(&mut self.store, &mut [], &mut [])?;
+        let contents = String::from_utf8(
+            self.stdout
+                .read_all()?,
+        )?;
+        println!("contents of stdout: {:?}", contents);
+        let contents = String::from_utf8(
+            self.stderr
+                .read_all()?,
+        )?;
+        println!("contents of stderr: {:?}", contents);
+        Ok(())
+    }
+}
+
 pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
-    // let input = Input {
-    //     script: "Hello World".to_string(),
-    // };
-    // let stdin = WasmFileInputBuffer(format!("{}\n", input.to_string()?).as_bytes().to_vec());
-    // let stdin = ReadPipe::from(format!("{}\n", input.to_string()?));
-    let mut stdin = StdinPipe::new();
-    // stdin.write_line(&input.to_string()?)?;
-    // let stdout = WritePipe::new_in_memory();
-    let mut stdout = StdoutPipe::new();
-    // A `Store` is what will own instances, functions, globals, etc. All wasm
-    // items are stored within a `Store`, and it's what we'll always be using to
-    // interact with the wasm world. Custom data can be stored in stores but for
-    // now we just use `()`.
-    let mut store = Store::new(
-        &WASM_ENGINE,
-        StoreState {
-            // TODO: we don't want to inherit stdio
-            wasi: WasiCtxBuilder::new()
-                .stdin(Box::new(ReadPipe::new(stdin.clone())))
-                .stdout(Box::new(WritePipe::new(stdout.clone())))
-                // .inherit_stdin()
-                // .inherit_stdout()
-                .inherit_stderr()
-                .build(),
-            limits: StoreLimitsBuilder::new()
-                .memory_size(limits.max_bytes)
-                .table_elements(limits.max_table_elements)
-                .build(),
-        },
-    );
-    store.limiter(|s| &mut s.limits);
-
-    // an `Instance` which we can actually poke at functions on.
-    // With a compiled `Module` we can then instantiate it, creating
-    // Using the linker to instantiate it lets us make functions available by name
-    let instance = WASM_LINKER.instantiate(&mut store, &WASM_MODULE)?;
-    let run = instance
-        .get_func(&mut store, "run")
-        .expect("Missing \"run\" fn in WASM module");
-
-    store.add_fuel(fuel)?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "var x = 1;x")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
-    run_in_sandbox(&mut store, &run, &mut stdin, &mut stdout, "++x")?;
-
-    // store.add_fuel(fuel)?;
-    // run.call(&mut store, &mut [], &mut [])?;
-
-    // stdin.write_line(&input.to_string()?)?;
-    // run.call(&mut store, &mut [], &mut [])?;
-    // run.call(&mut store, &mut [], &mut [])?;
-    // let contents = String::from_utf8(
-    //     stdout
-    //         // .try_into_inner()
-    //         // .expect("sole remaining reference to WritePipe")
-    //         .read_all()?,
-    // )?;
-    // println!("contents of stdout: {:?}", contents);
+    let mut sandbox = JsSandboxContext::new(limits);
+    sandbox.add_fuel(fuel)?;
+    sandbox.run("var x = 1;x")?;
+    sandbox.run("++x")?;
+    sandbox.run("++x")?;
+    sandbox.run("++x")?;
+    sandbox.run("console.log('hello stdout');console.error('hello stderr');0")?;
     Ok(())
 }
 
@@ -198,20 +207,4 @@ impl io::Read for StdinPipe {
             )),
         }
     }
-}
-
-fn run_in_sandbox<T>(store: &mut Store<T>, run: &Func, stdin: &mut StdinPipe, stdout: &mut StdoutPipe, script: &str) -> Result<(), Box<dyn Error>> {
-    let input = Input {
-        script: script.to_string()
-    };
-    stdin.write_line(&input.to_string()?)?;
-    run.call(store, &mut [], &mut [])?;
-    let contents = String::from_utf8(
-        stdout
-            // .try_into_inner()
-            // .expect("sole remaining reference to WritePipe")
-            .read_all()?,
-    )?;
-    println!("contents of stdout: {:?}", contents);
-    Ok(())
 }
