@@ -14,12 +14,11 @@ fn get_engine() -> Result<Engine, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-  let input_path = "../../target/wasm32-wasi/release/secure_js_sandbox_interpreter_boa.wasm";
+    let input_path = "../../target/wasm32-wasi/release/secure_js_sandbox_interpreter_boa.wasm";
     let start = Instant::now();
 
     eprintln!("Reading Module From File ({:?} elapsed)", start.elapsed());
-    let wasm_bytes =
-        std::fs::read(input_path)?;
+    let wasm_bytes = std::fs::read(input_path)?;
 
     eprintln!("Compiling Module ({:?} elapsed)", start.elapsed());
     // An engine stores and configures global compilation settings like

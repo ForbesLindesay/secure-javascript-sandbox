@@ -9,6 +9,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             max_bytes: 50 * 1024 * 1024,
             max_table_elements: 10_000,
         },
-        440_000_000,
+        440_000_000_000,
     )
 }
