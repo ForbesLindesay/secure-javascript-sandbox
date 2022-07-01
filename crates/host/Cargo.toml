@@ -2,10 +2,18 @@
 name = "secure_js_sandbox_host"
 version = "0.1.0"
 edition = "2021"
+build = "src/build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 crate-type = ["lib"]
 
+[build-dependencies]
+wasmtime = "0.38.1"
+
 [dependencies]
+lazy_static = "1.4.0"
+wasmtime = "0.38.1"
+wasmtime-wasi = "0.38.1"
+wasi-common = "0.38.1"
