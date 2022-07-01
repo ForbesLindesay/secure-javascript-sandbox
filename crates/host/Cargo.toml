@@ -13,8 +13,10 @@ crate-type = ["lib"]
 wasmtime = "0.38.1"
 
 [dependencies]
+anyhow = "1.0.58"
 lazy_static = "1.4.0"
 secure_js_sandbox_protocol = { version = "0.1.0" }
 wasmtime = "0.38.1"
 wasmtime-wasi = "0.38.1"
 wasi-common = "0.38.1"
+wiggle = "0.38.1"

@@ -2,9 +2,9 @@
 
 use boa_engine::*;
 use lazy_static::lazy_static;
-// use lazy_static::lazy_static;
-use secure_js_sandbox_protocol::{Input, Output};
+use secure_js_sandbox_protocol::EvaluationResult;
 use std::error::Error;
+use std::fs;
 use std::io::prelude::*;
 use std::io::stdin;
 use std::sync::Arc;
@@ -28,31 +28,39 @@ pub fn run() -> () {
     run_internal().unwrap()
 }
 
-
 fn run_internal() -> Result<(), Box<dyn Error>> {
-    for line in stdin().lock().lines() {
-        let line = line?;
-        let input = Input::from_str(&line)?;
-        let result = evaluate_js(&input.script);
-        println!("{}", result.to_string()?);
-    }
+    let output = std::env::args().nth(0);
+    let mut script = String::new();
+    stdin().read_to_string(&mut script)?;
+    let result = evaluate_js(&script);
+    match &output {
+        Some(path) => fs::write(path, result.to_string()?)?,
+        None => println!("{}", result.to_string()?),
+    };
     Ok(())
 }
 
-fn evaluate_js(script: &str) -> Output {
-    let mut ctx = JS_CONTEXT.0.lock().expect("Failed to get lock on JS context");
+fn evaluate_js(script: &str) -> EvaluationResult {
+    let mut ctx = JS_CONTEXT
+        .0
+        .lock()
+        .expect("Failed to get lock on JS context");
     match ctx.eval(script) {
-        Ok(v) => match v.to_json(&mut ctx) {
-            Ok(value) => Output::Ok { value },
-            Err(_) => Output::Err {
-                message: format!("Result {} could not be serialized to JSON", v.display()),
-            },
-        },
+        Ok(v) => {
+            if v.is_undefined() {
+                return EvaluationResult::Ok(None);
+            }
+            match v.to_json(&mut ctx) {
+                Ok(value) => EvaluationResult::Ok(Some(value)),
+                Err(_) => EvaluationResult::Err(format!(
+                    "Result {} could not be serialized to JSON",
+                    v.display()
+                )),
+            }
+        }
         Err(e) => match get_error_str(&e, &mut ctx) {
-            Some(str) => Output::Err { message: str },
-            None => Output::Err {
-                message: format!("Non error thrown: {}", e.display()),
-            },
+            Some(str) => EvaluationResult::Err(str),
+            None => EvaluationResult::Err(format!("Non error thrown: {}", e.display())),
         },
     }
 }
@@ -84,6 +92,6 @@ fn get_error_str(err: &JsValue, ctx: &mut Context) -> Option<String> {
     }
 }
 
-struct SharedContext (Arc<Mutex<Context>>);
+struct SharedContext(Arc<Mutex<Context>>);
 unsafe impl Send for SharedContext {}
 unsafe impl Sync for SharedContext {}

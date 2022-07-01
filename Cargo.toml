@@ -9,8 +9,8 @@ members = [
 ]
 
 [patch.crates-io]
-secure_js_sandbox_cli = { path = "./crates/cli" }
+# secure_js_sandbox_cli = { path = "./crates/cli" }
 secure_js_sandbox_host = { path = "./crates/host" }
-secure_js_sandbox_interpreter_boa = { path = "./crates/interpreter_boa" }
+# secure_js_sandbox_interpreter_boa = { path = "./crates/interpreter_boa" }
 secure_js_sandbox_protocol = { path = "./crates/protocol" }
-secure_js_sandbox_server = { path = "./crates/server" }
+# secure_js_sandbox_server = { path = "./crates/server" }

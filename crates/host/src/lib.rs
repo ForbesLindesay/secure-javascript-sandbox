@@ -1,18 +1,20 @@
 #![deny(warnings)]
 
+use anyhow::Result;
 use lazy_static::lazy_static;
-use std::error::Error;
+use secure_js_sandbox_protocol::{EvaluationResult, JsonValue};
+use std::any::Any;
+use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 use std::sync::Mutex;
-///, any::Any, io::{self}};
 use std::{collections::vec_deque::VecDeque, sync::Arc};
-use wasi_common::WasiCtx; // , WasiFile, file::FileType
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Func};
-use wasmtime_wasi::sync::WasiCtxBuilder;
-// use wasi_common::ErrorExt;
+use wasi_common::file::{FdFlags, Filestat, OFlags};
 use wasi_common::pipe::{ReadPipe, WritePipe};
+use wasi_common::{WasiCtx, WasiDir, WasiFile}; // , WasiFile, file::FileType
+use wasmtime::{Config, Engine, Func, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::sync::WasiCtxBuilder;
 
-use secure_js_sandbox_protocol::Input;
 struct StoreState {
     wasi: WasiCtx,
     limits: StoreLimits,
@@ -50,11 +52,34 @@ pub struct MemoryLimits {
     pub max_table_elements: u32,
 }
 
+#[derive(Debug)]
+pub enum JsRunOutput {
+    Ok {
+        result: Option<JsonValue>,
+        stdout: String,
+        stderr: String,
+    },
+    RuntimeError {
+        message: String,
+        stdout: String,
+        stderr: String,
+    },
+    OutOfFuel {
+        stdout: String,
+        stderr: String,
+    },
+    OutOfMemory {
+        stdout: String,
+        stderr: String,
+    },
+}
+
 pub struct JsSandboxContext {
     store: Store<StoreState>,
     stdin: StdinPipe,
     stdout: StdoutPipe,
     stderr: StdoutPipe,
+    output: StdoutPipe,
     run: Func,
 }
 
@@ -64,15 +89,24 @@ impl JsSandboxContext {
         let stdout = StdoutPipe::new();
         let stderr = StdoutPipe::new();
 
+        let mut ctx = WasiCtxBuilder::new()
+            .stdin(Box::new(ReadPipe::new(stdin.clone())))
+            .stdout(Box::new(WritePipe::new(stdout.clone())))
+            .stderr(Box::new(WritePipe::new(stderr.clone())))
+            .arg("/output.json")
+            .unwrap()
+            .build();
+
+        let mut files: HashMap<String, StdoutPipe> = HashMap::with_capacity(1);
+        let output = StdoutPipe::new();
+        files.insert("output.json".to_string(), output.clone());
+        ctx.push_preopened_dir(Box::new(VirtualDirectory(files)), "/")
+            .unwrap();
+
         let mut store = Store::new(
             &WASM_ENGINE,
             StoreState {
-                // TODO: we don't want to inherit stdio
-                wasi: WasiCtxBuilder::new()
-                    .stdin(Box::new(ReadPipe::new(stdin.clone())))
-                    .stdout(Box::new(WritePipe::new(stdout.clone())))
-                    .stderr(Box::new(WritePipe::new(stderr.clone())))
-                    .build(),
+                wasi: ctx,
                 limits: StoreLimitsBuilder::new()
                     .memory_size(limits.max_bytes)
                     .table_elements(limits.max_table_elements)
@@ -85,42 +119,77 @@ impl JsSandboxContext {
             .get_func(&mut store, "run")
             .expect("Missing \"run\" fn in WASM module");
 
-        JsSandboxContext { store, stdin, stdout, stderr, run }
+        JsSandboxContext {
+            store,
+            stdin,
+            stdout,
+            stderr,
+            output,
+            run,
+        }
     }
-    pub fn add_fuel(&mut self, fuel: u64) -> Result<(), Box<dyn Error>> {
-        Ok(self.store.add_fuel(fuel)?)
+
+    pub fn add_fuel(&mut self, fuel: u64) -> () {
+        self.store.add_fuel(fuel).unwrap()
     }
-    pub fn run(&mut self, script: &str) -> Result<(), Box<dyn Error>> {
-        let input = Input {
-            script: script.to_string()
+    pub fn fuel_consumed(&mut self) -> u64 {
+        self.store.fuel_consumed().unwrap()
+    }
+    pub fn fuel_remaining(&mut self) -> u64 {
+        match self.store.consume_fuel(0) {
+            Ok(v) => v,
+            Err(_) => 0,
+        }
+    }
+
+    pub fn run(&mut self, script: &str) -> Result<JsRunOutput> {
+        self.stdin.write_str(script)?;
+        match self.run.call(&mut self.store, &mut [], &mut []) {
+            Ok(_) => {},
+            Err(err) => {
+                let stdout = self.stdout.read_all_to_string()?;
+                let stderr = self.stderr.read_all_to_string()?;
+                if err.to_string().contains("all fuel consumed by WebAssembly") {
+                    return Ok(JsRunOutput::OutOfFuel {
+                        stdout,
+                        stderr,
+                    });
+                }
+                if err.to_string().contains("rust_oom") {
+                    return Ok(JsRunOutput::OutOfMemory {
+                        stdout,
+                        stderr,
+                    });
+                }
+                return Err(err.into());
+            }
+        }
+
+        let stdout = self.stdout.read_all_to_string()?;
+        let stderr = self.stderr.read_all_to_string()?;
+        let output = EvaluationResult::from_str(&self.output.read_all_to_string()?)?;
+
+        let output = match output {
+            EvaluationResult::Ok(value) => JsRunOutput::Ok {
+                result: value,
+                stdout,
+                stderr,
+            },
+            EvaluationResult::Err(message) => {
+                if message.contains("memory allocation failed because the memory allocator returned a error") {
+                    JsRunOutput::OutOfMemory { stdout, stderr }
+                } else {
+                    JsRunOutput::RuntimeError {
+                        message,
+                        stdout,
+                        stderr,
+                    }
+                }
+            },
         };
-        self.stdin.write_line(&input.to_string()?)?;
-        self.run.call(&mut self.store, &mut [], &mut [])?;
-        let contents = String::from_utf8(
-            self.stdout
-                .read_all()?,
-        )?;
-        println!("contents of stdout: {:?}", contents);
-        let contents = String::from_utf8(
-            self.stderr
-                .read_all()?,
-        )?;
-        println!("contents of stderr: {:?}", contents);
-        Ok(())
+        Ok(output)
     }
 }
-
-pub fn main(limits: &MemoryLimits, fuel: u64) -> Result<(), Box<dyn Error>> {
-    let mut sandbox = JsSandboxContext::new(limits);
-    sandbox.add_fuel(fuel)?;
-    sandbox.run("var x = 1;x")?;
-    sandbox.run("++x")?;
-    sandbox.run("++x")?;
-    sandbox.run("++x")?;
-    sandbox.run("console.log('hello stdout');console.error('hello stderr');0")?;
-    Ok(())
-}
-
 struct StdoutPipe(Arc<Mutex<VecDeque<u8>>>);
 
 impl Clone for StdoutPipe {
@@ -141,6 +210,11 @@ impl StdoutPipe {
                 "Unable to get lock",
             )),
         }
+    }
+    fn read_all_to_string(&mut self) -> Result<String> {
+        let bytes = self.read_all()?;
+        let str = String::from_utf8(bytes)?;
+        Ok(str)
     }
 }
 impl io::Write for StdoutPipe {
@@ -188,9 +262,6 @@ impl StdinPipe {
     fn write_str(&mut self, str: &str) -> io::Result<()> {
         self.write(str.as_bytes())
     }
-    fn write_line(&mut self, str: &str) -> io::Result<()> {
-        self.write_str(&format!("{}\n", str))
-    }
 }
 impl io::Read for StdinPipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -206,5 +277,98 @@ impl io::Read for StdinPipe {
                 "Unable to get lock",
             )),
         }
+    }
+}
+struct VirtualDirectory(HashMap<String, StdoutPipe>);
+
+#[wiggle::async_trait]
+impl WasiDir for VirtualDirectory {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    async fn open_file(
+        &self,
+        _symlink_follow: bool,
+        path: &str,
+        _oflags: OFlags,
+        _read: bool,
+        _write: bool,
+        _fdflags: FdFlags,
+    ) -> Result<Box<dyn WasiFile>, wasi_common::Error> {
+        match self.0.get(&path.to_string()) {
+            Some(file) => Ok(Box::new(WritePipe::new(Box::new(file.clone())))),
+            None => Err(wasi_common::Error::msg("Access denied")),
+        }
+        // Err(wasi_common::Error::msg("Access denied"))
+        // panic!("Not implemented open_file({:?})", (_symlink_follow, path, _oflags,_read, _write, _fdflags))
+        // Ok(Box::new(WritePipe::new(Box::new(StdoutPipe::new()))))
+    }
+    async fn open_dir(
+        &self,
+        _symlink_follow: bool,
+        _path: &str,
+    ) -> Result<Box<dyn WasiDir>, wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn create_dir(&self, _path: &str) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn readdir(
+        &self,
+        _cursor: wasi_common::dir::ReaddirCursor,
+    ) -> Result<
+        Box<
+            dyn Iterator<Item = Result<wasi_common::dir::ReaddirEntity, wasi_common::Error>> + Send,
+        >,
+        wasi_common::Error,
+    > {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn symlink(&self, _old_path: &str, _new_path: &str) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn remove_dir(&self, _path: &str) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn unlink_file(&self, _path: &str) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn read_link(&self, _path: &str) -> Result<PathBuf, wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn get_filestat(&self) -> Result<Filestat, wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn get_path_filestat(
+        &self,
+        _path: &str,
+        _follow_symlinks: bool,
+    ) -> Result<Filestat, wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn rename(
+        &self,
+        _path: &str,
+        _dest_dir: &dyn WasiDir,
+        _dest_path: &str,
+    ) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn hard_link(
+        &self,
+        _path: &str,
+        _target_dir: &dyn WasiDir,
+        _target_path: &str,
+    ) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
+    }
+    async fn set_times(
+        &self,
+        _path: &str,
+        _atime: Option<wasi_common::SystemTimeSpec>,
+        _mtime: Option<wasi_common::SystemTimeSpec>,
+        _follow_symlinks: bool,
+    ) -> Result<(), wasi_common::Error> {
+        Err(wasi_common::Error::msg("Access denied"))
     }
 }

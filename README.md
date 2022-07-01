@@ -76,8 +76,10 @@ The interpreter should have a standardized interface, allowing easy experimentat
 To run the CLI, you must first compile the _Interpreter_ to `wasm32-wasi`, you can then run:
 
 ```sh
-cargo run --bin secure_js_sandbox_cli
+cargo run --bin secure_js_sandbox_cli --script "console.log('hello world')"
 ```
+
+You can also run a benchmark comparing the `secure_js_sandbox_cli` against an insecure attempt at using node.js to create a sandbox by running `zsh tests/benchmark.zsh`
 
 ### Server
 
