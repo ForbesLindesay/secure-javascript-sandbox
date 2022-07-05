@@ -114,13 +114,13 @@ fn run(
         let mut sandbox = JsSandboxContext::new(&limits);
         sandbox.add_fuel(fuel * (repeat as u64));
         for _ in 0..repeat {
-            run_once_in_sandbox(&mut sandbox, &script, &quiet)?;
+            sandbox = run_once_in_sandbox(sandbox, &script, &quiet)?;
         }
     } else {
         for _ in 0..repeat {
             let mut sandbox = JsSandboxContext::new(&limits);
             sandbox.add_fuel(fuel);
-            run_once_in_sandbox(&mut sandbox, &script, &quiet)?;
+            run_once_in_sandbox(sandbox, &script, &quiet)?;
         }
     }
 
@@ -128,13 +128,14 @@ fn run(
 }
 
 fn run_once_in_sandbox(
-    sandbox: &mut host::JsSandboxContext,
+    sandbox: host::JsSandboxContext,
     script: &str,
     quiet: &bool,
-) -> Result<()> {
+) -> Result<host::JsSandboxContext> {
     let result = sandbox.run(script)?;
-    match result {
+    let ctx = match result {
         JsRunOutput::Ok {
+            ctx,
             result,
             stdout,
             stderr,
@@ -150,9 +151,10 @@ fn run_once_in_sandbox(
                     }
                 );
             }
-            Ok(())
+            Ok(ctx)
         },
         JsRunOutput::RuntimeError {
+            ctx: _,
             message,
             stdout,
             stderr,
@@ -166,7 +168,7 @@ fn run_once_in_sandbox(
             Err(JsCliResult::OutOfMemory { stdout, stderr })
         },
     }?;
-    Ok(())
+    Ok(ctx)
 }
 
 #[derive(Debug)]

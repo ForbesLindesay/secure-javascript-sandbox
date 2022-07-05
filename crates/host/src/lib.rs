@@ -12,7 +12,7 @@ use std::{collections::vec_deque::VecDeque, sync::Arc};
 use wasi_common::file::{FdFlags, Filestat, OFlags};
 use wasi_common::pipe::{ReadPipe, WritePipe};
 use wasi_common::{WasiCtx, WasiDir, WasiFile}; // , WasiFile, file::FileType
-use wasmtime::{Config, Engine, Func, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Func, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, Memory};
 use wasmtime_wasi::sync::WasiCtxBuilder;
 
 struct StoreState {
@@ -55,11 +55,13 @@ pub struct MemoryLimits {
 #[derive(Debug)]
 pub enum JsRunOutput {
     Ok {
+        ctx: JsSandboxContext,
         result: Option<JsonValue>,
         stdout: String,
         stderr: String,
     },
     RuntimeError {
+        ctx: JsSandboxContext,
         message: String,
         stdout: String,
         stderr: String,
@@ -81,6 +83,12 @@ pub struct JsSandboxContext {
     stderr: StdoutPipe,
     output: StdoutPipe,
     run: Func,
+    memory: Memory,
+}
+impl std::fmt::Debug for JsSandboxContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "JsSandboxContext")
+    }
 }
 
 impl JsSandboxContext {
@@ -118,7 +126,8 @@ impl JsSandboxContext {
         let run = instance
             .get_func(&mut store, "run")
             .expect("Missing \"run\" fn in WASM module");
-
+        let memory = instance.get_memory(&mut store, "memory")
+        .expect("Missing \"memory\" in WASM module");
         JsSandboxContext {
             store,
             stdin,
@@ -126,6 +135,7 @@ impl JsSandboxContext {
             stderr,
             output,
             run,
+            memory,
         }
     }
 
@@ -141,8 +151,11 @@ impl JsSandboxContext {
             Err(_) => 0,
         }
     }
+    pub fn memory_consumed(&mut self) -> usize {
+        self.memory.data_size(&mut self.store)
+    }
 
-    pub fn run(&mut self, script: &str) -> Result<JsRunOutput> {
+    pub fn run(mut self, script: &str) -> Result<JsRunOutput> {
         self.stdin.write_str(script)?;
         match self.run.call(&mut self.store, &mut [], &mut []) {
             Ok(_) => {},
@@ -171,6 +184,7 @@ impl JsSandboxContext {
 
         let output = match output {
             EvaluationResult::Ok(value) => JsRunOutput::Ok {
+                ctx: self,
                 result: value,
                 stdout,
                 stderr,
@@ -180,6 +194,7 @@ impl JsSandboxContext {
                     JsRunOutput::OutOfMemory { stdout, stderr }
                 } else {
                     JsRunOutput::RuntimeError {
+                        ctx: self,
                         message,
                         stdout,
                         stderr,

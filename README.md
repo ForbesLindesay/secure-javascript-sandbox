@@ -88,3 +88,139 @@ To run the Server, you must first compile the _Interpreter_ to `wasm32-wasi`, yo
 ```sh
 cargo run --bin secure_js_sandbox_server
 ```
+
+#### POST `/execute`
+
+Example:
+
+```sh
+  time curl -X POST http://localhost:3000/execute \
+    -H 'Content-Type: application/json' \
+    -d '{"sandbox_id": "x", "init_script": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "script": "fib(13)"}';
+```
+
+Request:
+
+```typescript
+interface RequestBody {
+  /**
+   * The sandbox ID should be a unique ID per sandbox you want to use.
+   * No two different users should have the same sandbox id. You can
+   * pass `null` to disable sandbox reuse between requests.
+   */
+  sandbox_id: string | null;
+  /**
+   * Script to run before "script" in order to initialize new sandboxes.
+   * This is especially useful when combined with a "sandbox_id" as it
+   * lets you run some setup code once, and re-use the result across
+   * many calls to the script. Note that sandbox re-use is only ever
+   * on a best-effort basis, so your code should never rely on sandbox
+   * reuse to function correctly.
+   */
+  init_script: string;
+  /**
+   * The JavaScript code to run on each request.
+   */
+  script: string;
+}
+```
+
+Response:
+
+```typescript
+/**
+ * OK indicates that the JavaScript
+ * code was successfully evaluated.
+ * The "result" field contains the
+ * value of the final expression that
+ * was evaluated (providing it can be)
+ * serialized to JSON.
+ * 
+ * Status Code = 200
+ */
+interface ResponseOk {
+  status: "OK";
+  result: unknown;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * RUNTIME_ERROR indicates that a runtime error
+ * was thrown by JavaScript while attempting to
+ * process the request.
+ * 
+ * Stack traces are currently not supported, but
+ * may be added in a future release.
+ * 
+ * Status Code = 400
+ */
+interface ResponseRuntimeError {
+  status: "RUNTIME_ERROR";
+  stage: "INIT" | "SCRIPT";
+  message: string;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * OUT_OF_FUEL indicates that too much CPU time was
+ * consumed while attempting to process the request.
+ * 
+ * Status Code = 400
+ */
+interface ResponseOutOfFuel {
+  status: "OUT_OF_FUEL";
+  stage: "INIT" | "SCRIPT";
+  message: string;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * OUT_OF_MEMORY indicates that too much memory was
+ * consumed by this JavaScript sandbox.
+ * 
+ * Status Code = 400
+ */
+interface ResponseOutOfMemory {
+  status: "OUT_OF_MEMORY";
+  stage: "INIT" | "SCRIPT";
+  message: string;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * INVALID_REQUEST indicates that the request body
+ * did not match the expected schema.
+ * 
+ * Status Code = 400
+ */
+interface ResponseInvalidRequest {
+  status: "INVALID_REQUEST";
+  message: string;
+}
+
+/**
+ * INTERNAL_SERVER_ERROR indicates that some unknown
+ * error occurred while attempting to process the
+ * request. This normally indicates a bug in
+ * secure-js-sandbox.
+ * 
+ * Status Code = 500
+ */
+interface ResponseInternalServerError {
+  status: "INTERNAL_SERVER_ERROR";
+  stage?: "INIT" | "SCRIPT";
+  message: string;
+}
+
+type ResponseBody =
+  | ResponseOk
+  | ResponseRuntimeError
+  | ResponseOutOfFuel
+  | ResponseOutOfMemory
+  | ResponseInvalidRequest
+  | ResponseInternalServerError
+```
