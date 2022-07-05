@@ -19,6 +19,10 @@ struct Config {
     #[clap(long, env, value_parser, default_value_t = 3000)]
     port: u16,
 
+    /// Limit to 128MB of data in the sandbox cache
+    #[clap(long, env, value_parser, default_value_t = 128 * 1024 * 1024)]
+    memory_limit_bytes_sandbox_cache: usize,
+
     /// Limit to 50MB per sandbox by default
     #[clap(long, env, value_parser, default_value_t = 50 * 1024 * 1024)]
     memory_limit_bytes_per_sandbox: usize,
@@ -141,6 +145,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let config = Config::parse();
     println!("{config:?}");
 
+    SANDBOX_STORE.set_memory_limit(Some(config.memory_limit_bytes_sandbox_cache));
     // For every connection, we must make a `Service` to handle all
     // incoming HTTP requests on said connection.
     let make_svc = make_service_fn(|_conn| {
@@ -174,7 +179,14 @@ async fn handle_request_internal(
     config: Config,
 ) -> Response<Body> {
     match (req.method(), req.uri().path()) {
-        (&Method::GET, "/") => Response::new(Body::from("Hello World!")),
+        (&Method::GET, "/") => json_response(StatusCode::OK, json!({
+            "memory_limit_bytes_sandbox_cache": config.memory_limit_bytes_sandbox_cache,
+            "memory_limit_bytes_per_sandbox": config.memory_limit_bytes_per_sandbox,
+            "max_table_elements_per_sandbox": config.max_table_elements_per_sandbox,
+            "fuel_per_init": config.fuel_per_init,
+            "fuel_per_call": config.fuel_per_call,
+            "memory_consumed": SANDBOX_STORE.memory_consumed()
+        })),
 
         (&Method::POST, "/execute") => {
             let response_body = handle_js_request(req, config).await;
@@ -322,8 +334,10 @@ mod sandbox_store {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use secure_js_sandbox_host::JsSandboxContext;
+    use index_list::{IndexList, Index};
 
     struct ReusableSandboxContext {
+        id: String,
         init_script: Option<String>,
         ctx: JsSandboxContext,
         memory_consumed: usize,
@@ -340,39 +354,68 @@ mod sandbox_store {
     }
 
     struct SandboxStoreCore {
+        memory_limit: Option<usize>,
         memory_consumed: usize,
-        map: HashMap<String, ReusableSandboxContext>,
+        map: HashMap<String, Index>,
+        list: IndexList<ReusableSandboxContext>
     }
 
     impl SandboxStoreCore {
-        pub fn new() -> SandboxStoreCore {
+        pub fn new(memory_limit: Option<usize>) -> SandboxStoreCore {
             SandboxStoreCore{
+                memory_limit,
                 memory_consumed: 0,
                 map: HashMap::new(),
+                list: IndexList::new(),
             }
         }
+        pub fn memory_consumed(&self) -> usize {
+            self.memory_consumed
+        }
         pub fn get(&mut self, id: &str, init_script: &Option<String>) -> Option<JsSandboxContext> {
-            let result = self.map.remove(id);
-            match result {
-                Some(s) => {
-                    self.memory_consumed = self.memory_consumed - s.memory_consumed;
-                    if init_scripts_equal(&s.init_script, init_script) {
-                        Some(s.ctx)
-                    } else {
-                        None
-                    }
-            },
-                None => None
+            let index = match self.map.remove(id) {
+                Some(index) => index,
+                None => return None,
+            };
+
+            let result = match self.list.remove(index) {
+                Some(result) => result,
+                None => return None,
+            };
+            self.memory_consumed = self.memory_consumed - result.memory_consumed;
+            if init_scripts_equal(&result.init_script, init_script) {
+                Some(result.ctx)
+            } else {
+                None
             }
         }
         pub fn set(&mut self, id: &str, init_script: Option<String>, mut ctx: JsSandboxContext) -> () {
             let memory_consumed = ctx.memory_consumed();
             self.memory_consumed = self.memory_consumed + memory_consumed;
-            self.map.insert(id.to_string(), ReusableSandboxContext {
+            let index = self.list.insert_last(ReusableSandboxContext {
+                id: id.to_string(),
                 init_script,
                 ctx,
                 memory_consumed,
             });
+            self.map.insert(id.to_string(), index);
+            self.shrink_to_fit();
+        }
+        pub fn set_memory_limit(&mut self, memory_limit: Option<usize>) {
+            self.memory_limit = memory_limit;
+            self.shrink_to_fit();
+        }
+        fn shrink_to_fit(&mut self) {
+            if let Some(memory_limit) = self.memory_limit {
+                while self.memory_consumed > memory_limit {
+                    if let Some(record) = self.list.remove_first() {
+                        self.memory_consumed = self.memory_consumed - record.memory_consumed;
+                        self.map.remove(&record.id);
+                    } else {
+                        panic!("Over memory limit but there are no contexts to remove")
+                    }
+                }
+            }
         }
     }
 
@@ -381,13 +424,19 @@ mod sandbox_store {
     unsafe impl Sync for SandboxStore {}
     impl SandboxStore {
         pub fn new() -> SandboxStore {
-            SandboxStore(Arc::new(Mutex::new(SandboxStoreCore::new())))
+            SandboxStore(Arc::new(Mutex::new(SandboxStoreCore::new(None))))
+        }
+        pub fn memory_consumed(&self) -> usize {
+            self.0.lock().unwrap().memory_consumed()
         }
         pub fn get(&self, id: &str, init_script: &Option<String>) -> Option<JsSandboxContext> {
             self.0.lock().unwrap().get(id, init_script)
         }
         pub fn set(&self, id: &str, init_script: Option<String>, ctx: JsSandboxContext) -> () {
             self.0.lock().unwrap().set(id, init_script, ctx)
+        }
+        pub fn set_memory_limit(&self, memory_limit: Option<usize>) -> () {
+            self.0.lock().unwrap().set_memory_limit(memory_limit)
         }
     }
 }
