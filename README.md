@@ -89,6 +89,46 @@ To run the Server, you must first compile the _Interpreter_ to `wasm32-wasi`, yo
 cargo run --bin secure_js_sandbox_server
 ```
 
+Options:
+
+```
+secure_js_sandbox_server 
+
+USAGE:
+    secure_js_sandbox_server [OPTIONS]
+
+OPTIONS:
+        --fuel-per-call <FUEL_PER_CALL>
+            The "fuel" for CPU operations. 440 million is approximately 100ms on my MacBook Pro
+            [env: FUEL_PER_CALL=] [default: 440000000]
+
+        --fuel-per-init <FUEL_PER_INIT>
+            The "fuel" for CPU operations. 440 million is approximately 100ms on my MacBook Pro
+            [env: FUEL_PER_INIT=] [default: 440000000]
+
+    -h, --help
+            Print help information
+
+        --max-table-elements-per-sandbox <MAX_TABLE_ELEMENTS_PER_SANDBOX>
+            I think this limits number of methods/exports in table, defaults to 10,000 [env:
+            MAX_TABLE_ELEMENTS_PER_SANDBOX=] [default: 10000]
+
+        --memory-limit-bytes-per-sandbox <MEMORY_LIMIT_BYTES_PER_SANDBOX>
+            Limit to 50MB per sandbox by default [env: MEMORY_LIMIT_BYTES_PER_SANDBOX=] [default:
+            52428800]
+
+        --memory-limit-bytes-sandbox-cache <MEMORY_LIMIT_BYTES_SANDBOX_CACHE>
+            Limit to 128MB of data in the sandbox cache [env: MEMORY_LIMIT_BYTES_SANDBOX_CACHE=]
+            [default: 134217728]
+
+        --port <PORT>
+            [env: PORT=] [default: 3000]
+```
+
+#### GET `/`
+
+Responds with current config and the memory used by the sandbox cache.
+
 #### POST `/execute`
 
 Example:
@@ -223,4 +263,18 @@ type ResponseBody =
   | ResponseOutOfMemory
   | ResponseInvalidRequest
   | ResponseInternalServerError
+```
+
+#### Docker
+
+You can build the docker image by running:
+
+```sh
+docker build -t secure-js-sandbox .
+```
+
+You can run the docker image by running:
+
+```sh
+docker run --rm -it -p "3000:3000" secure-js-sandbox
 ```
