@@ -2,279 +2,161 @@
 
 Secure sandbox for JavaScript plugins using Rust and Web Assembly.
 
-## Development Setup
-
-### Wasi
-
-Many rust crates don't work out of the box with wasm32-unknown-unknown because it does not provide functionality like system time and a source of randomness. Many common libraries do conditionally support a target of wasm32-wasi though. To use the `wasm32-wasi` target you may first have to install it by running:
-
-```sh
-rustup target add wasm32-wasi
-```
-
-### Wasmtime
-
-Wasmtime is a runtime for code that has been compiled to target wasm32-wasi. We use wasmtime as a library, but you can also directly run the .wasm files if you install wasmtime by running:
-
-```sh
-curl https://wasmtime.dev/install.sh -sSf | bash
-```
-
-### Wasm-NM
-
-The `.wasm` file is a binary format. If you want to read the instructions that were generated, you can extract a text based representation by running:
-
-```sh
-cargo install wasm-nm
-```
-
-and then running:
-
-```sh
-wasm-nm -z target/wasm32-wasi/release/secure_js_sandbox_interpreter_boa.wasm > sandbox.txt
-```
-
 ## Architecture
 
 This sandbox consists of the following components:
 
- - _Interpreter_ - This is an interpreter for JavaScript that is compiled to the wasm32-wasi target. My current implementation uses [boa](https://github.com/boa-dev/boa) to actually run the JavaScript, as it is entirely written in Rust, and can be easily compiled to run in wasm32-wasi. The interpreter should prevent the JavaScript accessing the system's disk, network etc. but does not limit the CPU and RAM consumed by the JavaScript.
- - _Host_ - The _Host_ library runs the _Interpreter_ using [wasmtime](https://wasmtime.dev). This enables us to impose limits on CPU usage (fuel) and RAM usage (memory). It also further sandboxes the _Interpreter_ so that any bugs in the _Interpreter_ cannot accidentally permit the JavaScript code to access system resources.
- - _Server_ - The _Server_ is designed to be deployed as a docker image to a service like Google's Cloud Run. It allows a JSON API to be used to call the _Host_. Ideally, this docker image should be deployed with minimal privileges, in order to limit the damage if bugs in the _Interpreter_ and _Host_ were to enable a sandbox escape. It's also a good idea to deploy it in an auto-scaling configuration so that bursts in requests can be easily handled. Having said that, the _Server_ does support multiple concurrent threads, so should be able to handle fairly high request volume on even modest hardware (depending on how much "fuel" and "memory" you allocate to each call).
- - _CLI_ - The _CLI_ is an alternative to the server that lets you directly call the _Host_
+ - `wasm-sandbox` is a JavaScript component compiled to WASM using [ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS), which embeds the Mozilla SpiderMonkey JavaScript engine inside the WebAssembly component.
+ - `crates/sandbox` provides the code to load this WebAssembly component and send it a JavaScript function to run and some JSON serialized parameters. It limits the "fuel" (approximately CPU cycles) and memory used by the WebAssembly component, and exposes only a few select APIs to the WebAssembly component to ensure it only has access to call the URLs you choose.
+ - `crates/axum_handler` provides helpers for defining a web endpoint for the axum Rust web server framework.
+ - `crates/server` provides a ready to use server that can be configured via environment variables.
 
-### Interpreter
+## Usage
 
-To run the interpreter natively (i.e. without the Host sandbox), you can run:
-
-```sh
-cargo run --bin secure_js_sandbox_interpreter_boa
-```
-
-To compile the interpreter to wasm32-wasi, you can run:
+### Run the server using docker
 
 ```sh
-cargo build --bin secure_js_sandbox_interpreter_boa --release --target wasm32-wasi
+docker run --rm -p "3000:3000" forbeslindesay/secure-js-sandbox
 ```
 
-This generates the output file: [secure_js_sandbox_interpreter_boa.wasm](target/wasm32-wasi/release/secure_js_sandbox_interpreter_boa.wasm). You can try running this using:
+### Config
 
-```sh
-wasmtime target/wasm32-wasi/release/secure_js_sandbox_interpreter_boa.wasm
+The server can be configured using these environment variables (defaults shown here):
+
+```toml
+# Host to listen on
+HOST="0.0.0.0"
+# Port number to listen on
+PORT="3000"
+
+# Set this to true to allow passing the sandbox config
+# options as JSON in the request body instead of setting
+# them via environment variables.
+# This would be much less secure.
+SANDBOX_ALLOW_CONFIG_IN_REQUEST="FALSE"
+
+# How many CPU cycles to allow per request. This corresponds
+# to about 100ms on my 2024 MacBook Pro
+SANDBOX_CPU_FUEL="440_000_000"
+# How much memory (in bytes) to allow each sandboxed function
+# to use. This includes the memory for the Spidermonkey VM
+# itself. Defaults to 128MB.
+SANDBOX_MAX_MEMORY_BYTES="134_217_728"
+# Set a limit on the number of "tables elements" within the WASM VM
+SANDBOX_MAX_TABLE_ELEMENTS="100_000"
+# Set a limit on the number of "instances" within the WASM VM
+SANDBOX_MAX_INSTANCES="10_000"
+# Set a limit on the number of "tables" within the WASM VM
+SANDBOX_MAX_TABLES="10_000"
+# Set a limit on the number of "memories" within the WASM VM
+SANDBOX_MAX_MEMORIES="10_000"
+# Enable this to throw a WASM error when running out of memory,
+# instead of the default JavaScript out of memory error.
+SANDBOX_TRAP_ON_GROW_FAILURE="FALSE"
+# The maximum number of bytes of stdout (i.e. console.log) to
+# record. If stdout exceeds this limit, andy further data will
+# just be dropped.
+SANDBOX_STDOUT_MAX_BYTES="10_485_760"
+# The maximum number of bytes of stderr (i.e. console.error) to
+# record. If stderr exceeds this limit, andy further data will
+# just be dropped.
+SANDBOX_STDERR_MAX_BYTES="10_485_760"
+# Whether to allow outbound requests via the `fetch` function.
+SANDBOX_HTTP_MODE="DISABLED"
 ```
 
-The interpreter should have a standardized interface, allowing easy experimentation with other JavaScript interpreters in the future:
+There are 4 possible values for `SANDBOX_HTTP_MODE`
 
-- [ToyJS](https://github.com/DelSkayn/toyjs) - Relatively new project and probably much more limited than Boa
-- [Starlight](https://github.com/Starlight-JS/starlight) - Much less actively maintained than boa
-- V8 etc. - probably much harder to compile to web assembly
-- JavaScript Core - [JSC.js](https://github.com/mbbill/JSC.js) shows it is possible to compile this to web assembly
+* `ALLOW_ALL` - allows all outbound requests without any restrictions.
+* `ALLOW_GLOBAL_IP_ONLY` - allows outbound requests only if the target is an IP address that's considered "Global".
+* `ALLOW_LIST_HOSTS:{hosts,}*` - allows outbound requests only to the specified list of host names. e.g. `ALLOW_LIST_HOSTS:example.com,example.org` would allow fetch requests to `example.com` and `example.org` but not to `example.net`.
+* `DISABLED` - blocks all outbound requests.
 
+### API
 
-### CLI
-
-To run the CLI, you must first compile the _Interpreter_ to `wasm32-wasi`, you can then run:
-
-```sh
-cargo run --bin secure_js_sandbox_cli --script "console.log('hello world')"
-```
-
-You can also run a benchmark comparing the `secure_js_sandbox_cli` against an insecure attempt at using node.js to create a sandbox by running `zsh tests/benchmark.zsh`
-
-### Server
-
-To run the Server, you must first compile the _Interpreter_ to `wasm32-wasi`, you can then run:
-
-```sh
-cargo run --bin secure_js_sandbox_server
-```
-
-Options:
-
-```
-secure_js_sandbox_server 
-
-USAGE:
-    secure_js_sandbox_server [OPTIONS]
-
-OPTIONS:
-        --fuel-per-call <FUEL_PER_CALL>
-            The "fuel" for CPU operations. 440 million is approximately 100ms on my MacBook Pro
-            [env: FUEL_PER_CALL=] [default: 440000000]
-
-        --fuel-per-init <FUEL_PER_INIT>
-            The "fuel" for CPU operations. 440 million is approximately 100ms on my MacBook Pro
-            [env: FUEL_PER_INIT=] [default: 440000000]
-
-    -h, --help
-            Print help information
-
-        --max-table-elements-per-sandbox <MAX_TABLE_ELEMENTS_PER_SANDBOX>
-            I think this limits number of methods/exports in table, defaults to 10,000 [env:
-            MAX_TABLE_ELEMENTS_PER_SANDBOX=] [default: 10000]
-
-        --memory-limit-bytes-per-sandbox <MEMORY_LIMIT_BYTES_PER_SANDBOX>
-            Limit to 50MB per sandbox by default [env: MEMORY_LIMIT_BYTES_PER_SANDBOX=] [default:
-            52428800]
-
-        --memory-limit-bytes-sandbox-cache <MEMORY_LIMIT_BYTES_SANDBOX_CACHE>
-            Limit to 128MB of data in the sandbox cache [env: MEMORY_LIMIT_BYTES_SANDBOX_CACHE=]
-            [default: 134217728]
-
-        --port <PORT>
-            [env: PORT=] [default: 3000]
-```
-
-#### GET `/`
-
-Responds with current config and the memory used by the sandbox cache.
-
-#### POST `/execute`
+#### POST `/evaluate`
 
 Example:
 
 ```sh
-  time curl -X POST http://localhost:3000/execute \
+  time curl -X POST http://localhost:3000/evaluate \
     -H 'Content-Type: application/json' \
-    -d '{"sandbox_id": "x", "init_script": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "script": "fib(13)"}';
+    -d '{"script": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "args": [13]}';
 ```
 
 Request:
 
 ```typescript
-interface RequestBody {
+interface EvaluateRequest {
   /**
-   * The sandbox ID should be a unique ID per sandbox you want to use.
-   * No two different users should have the same sandbox id. You can
-   * pass `null` to disable sandbox reuse between requests.
-   */
-  sandbox_id: string | null;
-  /**
-   * Script to run before "script" in order to initialize new sandboxes.
-   * This is especially useful when combined with a "sandbox_id" as it
-   * lets you run some setup code once, and re-use the result across
-   * many calls to the script. Note that sandbox re-use is only ever
-   * on a best-effort basis, so your code should never rely on sandbox
-   * reuse to function correctly.
-   */
-  init_script: string;
-  /**
-   * The JavaScript code to run on each request.
+   * A function expression to be evaluated. The function can be async, allowing for the use
+   * of `fetch` and things like timers.
    */
   script: string;
+  /**
+   * A list of arguments to pass in to the function defined by `script`.
+   */
+  args: unknown[];
 }
 ```
 
 Response:
 
 ```typescript
-/**
- * OK indicates that the JavaScript
- * code was successfully evaluated.
- * The "result" field contains the
- * value of the final expression that
- * was evaluated (providing it can be)
- * serialized to JSON.
- * 
- * Status Code = 200
- */
-interface ResponseOk {
-  status: "OK";
+interface EvaluateResponse {
+  /**
+   * True if the function ran without any errors.
+   */
+  success: boolean;
+  /**
+   * The value returned by the function if success is true,
+   * otherwise this will be an object in the form {error: string}
+   */
   result: unknown;
   stdout: string;
   stderr: string;
+  fuel_consumed: number;
+  fuel_remaining: number;
+  max_requested_memory_bytes: number;
+  max_requested_table_elements: number;
+  outbound_requests: {
+    outcome: "ALLOWED" | "BLOCKED";
+    uri: string;
+    socket_addr: string | null;
+  }[]
 }
-
-/**
- * RUNTIME_ERROR indicates that a runtime error
- * was thrown by JavaScript while attempting to
- * process the request.
- * 
- * Stack traces are currently not supported, but
- * may be added in a future release.
- * 
- * Status Code = 400
- */
-interface ResponseRuntimeError {
-  status: "RUNTIME_ERROR";
-  stage: "INIT" | "SCRIPT";
-  message: string;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * OUT_OF_FUEL indicates that too much CPU time was
- * consumed while attempting to process the request.
- * 
- * Status Code = 400
- */
-interface ResponseOutOfFuel {
-  status: "OUT_OF_FUEL";
-  stage: "INIT" | "SCRIPT";
-  message: string;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * OUT_OF_MEMORY indicates that too much memory was
- * consumed by this JavaScript sandbox.
- * 
- * Status Code = 400
- */
-interface ResponseOutOfMemory {
-  status: "OUT_OF_MEMORY";
-  stage: "INIT" | "SCRIPT";
-  message: string;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * INVALID_REQUEST indicates that the request body
- * did not match the expected schema.
- * 
- * Status Code = 400
- */
-interface ResponseInvalidRequest {
-  status: "INVALID_REQUEST";
-  message: string;
-}
-
-/**
- * INTERNAL_SERVER_ERROR indicates that some unknown
- * error occurred while attempting to process the
- * request. This normally indicates a bug in
- * secure-js-sandbox.
- * 
- * Status Code = 500
- */
-interface ResponseInternalServerError {
-  status: "INTERNAL_SERVER_ERROR";
-  stage?: "INIT" | "SCRIPT";
-  message: string;
-}
-
-type ResponseBody =
-  | ResponseOk
-  | ResponseRuntimeError
-  | ResponseOutOfFuel
-  | ResponseOutOfMemory
-  | ResponseInvalidRequest
-  | ResponseInternalServerError
 ```
 
-#### Docker
+## Development Setup
+
+1. Build the wasm-sandbox by running `cd wasm-sandbox && npm install && npm build`
+2. Run the server using `cargo run --bin secure_js_sandbox_server`
+3. Run tests via `zsh tests/some-file.zsh`
 
 You can build the docker image by running:
 
 ```sh
-docker build -t secure-js-sandbox .
+docker build -t forbeslindesay/secure-js-sandbox .
 ```
 
 You can run the docker image by running:
 
 ```sh
-docker run --rm -it -p "3000:3000" secure-js-sandbox
+docker run --rm -it -p "3000:3000" forbeslindesay/secure-js-sandbox
+```
+
+To publish the image:
+
+```sh
+docker login
+
+docker buildx create \
+  --name container \
+  --driver=docker-container
+
+docker buildx build \
+  --tag forbeslindesay/secure-js-sandbox:latest \
+  --platform linux/arm/v7,linux/arm64/v8,linux/amd64 \
+  --builder container \
+  --push .
 ```

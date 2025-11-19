@@ -13,3 +13,4 @@ Cargo.lock
 
 # We compile our wasm module down to a ".bin" file
 *.bin
+*.wasm

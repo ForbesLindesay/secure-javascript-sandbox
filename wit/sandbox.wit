@@ -1,0 +1,5 @@
+package local:sandbox;
+
+world sandbox {
+  export evaluate: func(script: string, args: list<string>) -> result<string, string>;
+}

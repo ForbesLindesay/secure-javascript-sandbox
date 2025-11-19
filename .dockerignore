@@ -1,1 +1,3 @@
 target/
+wasm-sandbox/
+crates/sandbox/src/sandbox.bin

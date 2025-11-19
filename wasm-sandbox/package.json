@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "dependencies": {
+    "@bytecodealliance/componentize-js": "^0.19.3",
+    "@bytecodealliance/jco": "^1.15.3"
+  },
+  "scripts": {
+    "build": "jco componentize --wit ../wit/sandbox.wit --world-name sandbox --out ../crates/sandbox/src/sandbox.wasm sandbox.js"
+  }
+}
