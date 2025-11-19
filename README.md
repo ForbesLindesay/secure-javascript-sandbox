@@ -156,7 +156,7 @@ docker buildx create \
 
 docker buildx build \
   --tag forbeslindesay/secure-js-sandbox:latest \
-  --platform linux/arm/v7,linux/arm64/v8,linux/amd64 \
+  --platform linux/arm64,linux/amd64 \
   --builder container \
   --push .
 ```

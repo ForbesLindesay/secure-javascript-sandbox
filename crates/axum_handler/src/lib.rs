@@ -6,7 +6,7 @@ use axum::{
 };
 use secure_js_sandbox::{RequestValidationOutcome, SandboxConfig, SandboxEngine, WasiCtx};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{error::Error, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 pub use secure_js_sandbox::{CustomHttpMode, HttpMode, MemoryLimits, MemoryOutputPipe};
 
@@ -164,7 +164,7 @@ pub async fn create_evaluate_handler<
     T: Clone + Send + Sync + 'static,
 >(
     config: TConfig,
-) -> Result<MethodRouter<T>, Box<dyn Error>> {
+) -> anyhow::Result<MethodRouter<T>> {
     let config = Arc::new(config);
     let engine = Arc::new(SandboxEngine::new()?);
     let result: MethodRouter<T> = post(

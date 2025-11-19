@@ -7,10 +7,20 @@ use axum::{
 use secure_js_sandbox_axum_handler::{
     AllowRequestToConfigureSandbox, SandboxServerConfig, create_evaluate_handler, get_env,
 };
-use std::error::Error;
+
+mod signal;
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn Error>> {
+pub async fn main() -> anyhow::Result<()> {
+    let main = start_server();
+    let signal_listener = signal::listen_signal();
+    tokio::select! {
+        res = main => res,
+        res = signal_listener => res,
+    }
+}
+
+pub async fn start_server() -> anyhow::Result<()> {
     // build our application with a route
     let mut app = Router::new()
         // `GET /` goes to `root`

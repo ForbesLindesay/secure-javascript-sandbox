@@ -20,6 +20,9 @@ if (isMainThread) {
       const start = Date.now()
       const result = await runOnce()
       const end = Date.now()
+      if (result !== 377) {
+        throw new Error(`Unexpected result: ${result}`)
+      }
       if (!quiet) {
         console.warn(`${end - start}ms`)
         console.log(result)
@@ -65,7 +68,7 @@ function getRunForEndpoint(script, args, endpoint) {
     if (!res.ok) {
       throw new Error(`Failed to run script: ${res.status} ${res.statusText}: ${await res.text()}`)
     }
-    return res.json().result
+    return (await res.json()).result
   }
 }
 async function runWorker(script, args, timeoutMs, endpoint) {

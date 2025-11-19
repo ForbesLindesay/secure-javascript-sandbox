@@ -8,11 +8,6 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.7"
-clap = { version = "3.0", features = ["derive", "env"] }
-futures = { version = "0.3.21" }
-hyper = { version = "0.14", features = ["full"] }
-index_list = { version = "0.2.7" }
-lazy_static = { version = "1.4.0" }
 secure_js_sandbox_axum_handler = { version = "0.1.0" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145" }

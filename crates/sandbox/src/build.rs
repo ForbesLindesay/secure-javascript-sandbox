@@ -5,7 +5,7 @@ use wasmtime::{Config, Engine};
 
 fn get_engine() -> Result<Engine, Box<dyn Error>> {
     let mut engine_config = Config::new();
-    engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+    // engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
     engine_config.consume_fuel(true);
     engine_config.async_support(true);
 

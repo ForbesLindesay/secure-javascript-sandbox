@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 
 use hyper::Uri;
 use wasmtime::component::{Component, Linker};
-use wasmtime::{Config, Engine, Store, WasmBacktraceDetails};
+use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
@@ -54,7 +54,7 @@ impl SandboxEngine {
     pub fn new() -> anyhow::Result<Self> {
         let mut engine_config = Config::new();
         // engine_config.cache_config_load_default().unwrap();
-        engine_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+        // engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
         engine_config.consume_fuel(true);
         engine_config.async_support(true);
 
