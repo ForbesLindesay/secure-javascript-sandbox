@@ -22,4 +22,4 @@ time curl -X POST http://localhost:3000/evaluate \
 echo "Excessive memory test:"
 time curl -X POST http://localhost:3000/evaluate \
   -H 'Content-Type: application/json' \
-  -d '{"script": "function fn() { let result = new Uint8Array(1024 * 1024 * 100); return result.byteLength }", "args": []}';
+  -d '{"script": "function fn() { let result = new Uint8Array(1024 * 1024 * 128); return result.byteLength }", "args": []}';

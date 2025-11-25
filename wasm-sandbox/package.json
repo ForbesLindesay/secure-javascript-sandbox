@@ -5,6 +5,8 @@
     "@bytecodealliance/jco": "^1.15.3"
   },
   "scripts": {
-    "build": "jco componentize --wit ../wit/sandbox.wit --world-name sandbox --out ../crates/sandbox/src/sandbox.wasm sandbox.js"
+    "build": "npm run build:fn && npm run build:module",
+    "build:fn": "jco componentize --wit ../wit/sandbox.wit --world-name sandbox --out ../crates/sandbox/src/sandbox.wasm sandbox.js",
+    "build:module": "jco componentize --wit ../wit/modulesandbox.wit --world-name modulesandbox --out ../crates/sandbox/src/modulesandbox.wasm modulesandbox.js"
   }
 }

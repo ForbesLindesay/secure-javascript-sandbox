@@ -1,4 +1,3 @@
-
 #[cfg(unix)]
 pub(crate) async fn listen_signal() -> anyhow::Result<()> {
     tokio::spawn(async {

@@ -5,9 +5,11 @@ members = [
     "crates/axum_handler",
     "crates/sandbox",
     "crates/server",
+    "crates/ts_utils",
 ]
 
 [patch.crates-io]
 secure_js_sandbox_axum_handler = { path = "./crates/axum_handler" }
 secure_js_sandbox = { path = "./crates/sandbox" }
+secure_js_sandbox_ts_utils = { path = "./crates/ts_utils" }
 # secure_js_sandbox_server = { path = "./crates/server" }

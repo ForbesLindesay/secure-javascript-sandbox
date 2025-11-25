@@ -15,8 +15,7 @@ fn get_engine() -> Result<Engine, Box<dyn Error>> {
     Ok(engine)
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let input_path = "src/sandbox.wasm";
+fn compile(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
 
     eprintln!("Reading Module From File ({:?} elapsed)", start.elapsed());
@@ -28,11 +27,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let engine = get_engine()?;
     let compiled_component = engine.precompile_component(&wasm_bytes)?;
 
-    eprintln!("Wring Module To File ({:?} elapsed)", start.elapsed());
-    std::fs::write("src/sandbox.bin", &compiled_component)?;
+    eprintln!("Writing Module To File ({:?} elapsed)", start.elapsed());
+    std::fs::write(output_path, &compiled_component)?;
 
     eprintln!("Finished ({:?} elapsed)", start.elapsed());
 
     println!("cargo:rerun-if-changed={}", input_path);
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    compile("src/sandbox.wasm", "src/sandbox.bin")?;
+    compile("src/modulesandbox.wasm", "src/modulesandbox.bin")?;
     Ok(())
 }

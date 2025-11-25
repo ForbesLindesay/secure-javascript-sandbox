@@ -1,26 +1,67 @@
+use hyper::Uri;
 use std::fmt;
 use std::net::SocketAddr;
-
-use hyper::Uri;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
-use crate::http::RequestValidationOutcome;
 use crate::state::SandboxState;
-use crate::{HttpMode, MemoryLimits};
+use crate::{HttpMode, MemoryLimits, RequestValidationOutcome};
 
-mod bindings {
-    // Generates bindings for the plugin world defined in the wit/plugin_implementation.wit file.
-    wasmtime::component::bindgen!({
-        world: "sandbox",
-        path: "../../wit/sandbox.wit",
-        exports: {
-            default: async
+macro_rules! impl_sandbox_engine {
+    ($engine:ident, $instance:ident, $name:ident, $world:expr, $wit_path:expr, $file:expr, $enable_module_compiler:expr) => {
+        mod bindings {
+            // Generates bindings for the plugin world defined in the wit/plugin_implementation.wit file.
+            wasmtime::component::bindgen!({
+                world: $world,
+                path: $wit_path,
+                exports: {
+                    default: async
+                }
+            });
         }
-    });
+
+        pub struct $engine {
+            engine: crate::sandbox::BaseSandboxEngine
+        }
+
+        impl $engine {
+            pub fn new() -> anyhow::Result<Self> {
+                let engine = crate::sandbox::BaseSandboxEngine::new(include_bytes!($file))?;
+                Ok(Self { engine })
+            }
+
+            pub async fn build(&self, config: crate::sandbox::SandboxConfig) -> anyhow::Result<$instance> {
+                let mut store = self.engine.build_store(config, $enable_module_compiler).await?;
+
+                let sandbox =
+                    bindings::$name::instantiate_async(&mut store, &self.engine.component, &self.engine.linker).await?;
+
+                Ok($instance { store, sandbox })
+            }
+        }
+        pub struct $instance {
+            sandbox: bindings::$name,
+            store: Store<SandboxState>,
+        }
+        impl crate::sandbox::SandboxInstanceBase for $instance {
+            fn get_fuel_remaining(&self) -> u64 {
+                self.store.get_fuel().unwrap_or(0)
+            }
+            fn get_max_requested_memory_bytes(&self) -> Option<usize> {
+                self.store.data().max_requested_memory_bytes
+            }
+            fn get_max_requested_table_elements(&self) -> Option<usize> {
+                self.store.data().max_requested_table_elements
+            }
+            fn take_requests(&self) -> Vec<(hyper::Uri, Option<std::net::SocketAddr>, crate::RequestValidationOutcome)> {
+                self.store.data().requests.take()
+            }
+        }
+    };
 }
+pub(crate) use impl_sandbox_engine;
 
 pub struct SandboxConfig {
     /// Limit of CPU instructions that can be executed in this sandbox.
@@ -34,7 +75,9 @@ pub struct SandboxConfig {
     /// Example:
     ///
     /// ```rust
-    /// let stdout = MemoryOutputPipe::new(self.config.memory_limit_bytes);
+    /// use secure_js_sandbox::{MemoryOutputPipe, WasiCtx};
+    ///
+    /// let stdout = MemoryOutputPipe::new(1024 * 1024); // 1 MB buffer
     /// let ctx: WasiCtx = WasiCtx::builder()
     ///     .stdin(tokio::io::stdin())
     ///     .stdout(stdout.clone())
@@ -44,14 +87,14 @@ pub struct SandboxConfig {
     pub ctx: WasiCtx,
 }
 
-pub struct SandboxEngine {
+pub(crate) struct BaseSandboxEngine {
     engine: Engine,
-    component: Component,
-    linker: Linker<SandboxState>,
+    pub component: Component,
+    pub linker: Linker<SandboxState>,
 }
 
-impl SandboxEngine {
-    pub fn new() -> anyhow::Result<Self> {
+impl BaseSandboxEngine {
+    pub fn new(bytes: impl AsRef<[u8]>) -> anyhow::Result<Self> {
         let mut engine_config = Config::new();
         // engine_config.cache_config_load_default().unwrap();
         // engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
@@ -70,7 +113,7 @@ impl SandboxEngine {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
 
-        let component = unsafe { Component::deserialize(&engine, include_bytes!("sandbox.bin"))? };
+        let component: Component = unsafe { Component::deserialize(&engine, bytes)? };
 
         Ok(Self {
             engine,
@@ -79,7 +122,11 @@ impl SandboxEngine {
         })
     }
 
-    pub async fn build(&self, config: SandboxConfig) -> anyhow::Result<SandboxInstance> {
+    pub async fn build_store(
+        &self,
+        config: SandboxConfig,
+        enable_module_compiler: bool,
+    ) -> anyhow::Result<Store<SandboxState>> {
         let ctx = config.ctx;
         let mut store = Store::new(
             &self.engine,
@@ -92,15 +139,13 @@ impl SandboxEngine {
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
                 requests: Default::default(),
+                enable_module_compiler,
             },
         );
         store.limiter(|s| s);
         store.set_fuel(config.cpu_fuel)?;
 
-        let sandbox =
-            bindings::Sandbox::instantiate_async(&mut store, &self.component, &self.linker).await?;
-
-        Ok(SandboxInstance { store, sandbox })
+        Ok(store)
     }
 }
 
@@ -138,42 +183,9 @@ impl From<serde_json::Error> for EvaluateError {
     }
 }
 
-pub struct SandboxInstance {
-    sandbox: bindings::Sandbox,
-    store: Store<SandboxState>,
-}
-
-impl SandboxInstance {
-    pub fn get_fuel_remaining(&self) -> u64 {
-        self.store.get_fuel().unwrap_or(0)
-    }
-    pub fn get_max_requested_memory_bytes(&self) -> Option<usize> {
-        self.store.data().max_requested_memory_bytes
-    }
-    pub fn get_max_requested_table_elements(&self) -> Option<usize> {
-        self.store.data().max_requested_table_elements
-    }
-    pub fn take_requests(&self) -> Vec<(Uri, Option<SocketAddr>, RequestValidationOutcome)> {
-        self.store.data().requests.take()
-    }
-    pub async fn evaluate(
-        &mut self,
-        script: &str,
-        parameters: &[serde_json::Value],
-    ) -> Result<serde_json::Value, EvaluateError> {
-        let parameters: Vec<_> = parameters
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<_, _>>()?;
-        let result = self
-            .sandbox
-            .call_evaluate(&mut self.store, script, &parameters)
-            .await;
-        if result.is_err() && self.get_fuel_remaining() == 0 {
-            return Err(EvaluateError::FuelExhausted);
-        }
-        let result = result?;
-        let result = serde_json::from_str(&result?)?;
-        Ok(result)
-    }
+pub trait SandboxInstanceBase {
+    fn get_fuel_remaining(&self) -> u64;
+    fn get_max_requested_memory_bytes(&self) -> Option<usize>;
+    fn get_max_requested_table_elements(&self) -> Option<usize>;
+    fn take_requests(&self) -> Vec<(Uri, Option<SocketAddr>, RequestValidationOutcome)>;
 }

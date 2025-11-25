@@ -3,10 +3,14 @@ use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::task::Context;
 
 use http_body_util::BodyExt;
+use http_body_util::combinators::BoxBody;
+use hyper::body::{Body, Bytes};
 use hyper::header;
 use hyper::{Method, Uri};
+use secure_js_sandbox_ts_utils::compile_module;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
@@ -72,12 +76,12 @@ pub enum HttpMode {
     AllowGlobalIpOnly,
     AllowListHosts(Arc<HashSet<String>>),
     Custom(Arc<Box<dyn CustomHttpMode>>),
-    Disabled,
+    BlockAll,
 }
 
 impl Default for HttpMode {
     fn default() -> Self {
-        HttpMode::Disabled
+        HttpMode::BlockAll
     }
 }
 
@@ -86,7 +90,7 @@ enum SerializedHttpMode {
     AllowAll,
     AllowGlobalIpOnly,
     AllowListHosts(Vec<String>),
-    Disabled,
+    BlockAll,
 }
 
 impl<'de> Deserialize<'de> for HttpMode {
@@ -102,7 +106,7 @@ impl<'de> Deserialize<'de> for HttpMode {
                 let host_set: HashSet<String> = hosts.into_iter().collect();
                 Ok(HttpMode::AllowListHosts(Arc::new(host_set)))
             }
-            SerializedHttpMode::Disabled => Ok(HttpMode::Disabled),
+            SerializedHttpMode::BlockAll => Ok(HttpMode::BlockAll),
         }
     }
 }
@@ -126,7 +130,7 @@ impl FromStr for HttpMode {
         let result = match s {
             "ALLOW_ALL" => HttpMode::AllowAll,
             "ALLOW_GLOBAL_IP_ONLY" => HttpMode::AllowGlobalIpOnly,
-            "DISABLED" => HttpMode::Disabled,
+            "BLOCK_ALL" => HttpMode::BlockAll,
             str if str.starts_with("ALLOW_LIST_HOSTS:") => {
                 let hosts_str = &str["ALLOW_LIST_HOSTS:".len()..];
                 let hosts: HashSet<String> = hosts_str
@@ -159,7 +163,7 @@ impl CustomHttpMode for HttpMode {
                 }
             }
             HttpMode::Custom(ctx) => ctx.can_send_request(request, config),
-            HttpMode::Disabled => false,
+            HttpMode::BlockAll => false,
         }
     }
     fn can_connect(&self, address: SocketAddr) -> bool {
@@ -168,7 +172,7 @@ impl CustomHttpMode for HttpMode {
             HttpMode::AllowGlobalIpOnly => address.ip().is_global_ext(),
             HttpMode::AllowListHosts(_) => true,
             HttpMode::Custom(ctx) => ctx.can_connect(address),
-            HttpMode::Disabled => false,
+            HttpMode::BlockAll => false,
         }
     }
 }
@@ -181,6 +185,7 @@ pub(crate) async fn send_request_handler(
     config: OutgoingRequestConfig,
     http_mode: &HttpMode,
     requests: Requests,
+    enable_module_compiler: bool,
 ) -> Result<IncomingResponse, ErrorCode> {
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
@@ -188,7 +193,11 @@ pub(crate) async fn send_request_handler(
         let (parts, body) = request.into_parts();
         let mut request = hyper::Request::from_parts(parts.clone(), body);
         if !http_mode.can_send_request(&request, &config) {
-            requests.push((request.uri().clone(), None, RequestValidationOutcome::Blocked));
+            requests.push((
+                request.uri().clone(),
+                None,
+                RequestValidationOutcome::Blocked,
+            ));
             return Err(ErrorCode::DestinationNotFound);
         }
         let OutgoingRequestConfig {
@@ -207,12 +216,18 @@ pub(crate) async fn send_request_handler(
         } else {
             return Err(ErrorCode::HttpRequestUriInvalid);
         };
-        let (tcp_stream, socket_addr) =
-            timeout(connect_timeout, get_tcp_stream(request.uri(), &authority, &http_mode, &requests))
-                .await
-                .map_err(|_| ErrorCode::ConnectionTimeout)??;
+        let (tcp_stream, socket_addr) = timeout(
+            connect_timeout,
+            get_tcp_stream(request.uri(), &authority, &http_mode, &requests),
+        )
+        .await
+        .map_err(|_| ErrorCode::ConnectionTimeout)??;
         {
-            requests.push((request.uri().clone(), Some(socket_addr), RequestValidationOutcome::Allowed));
+            requests.push((
+                request.uri().clone(),
+                Some(socket_addr),
+                RequestValidationOutcome::Allowed,
+            ));
         }
         let (mut sender, worker) = if use_tls {
             use rustls::pki_types::ServerName;
@@ -318,6 +333,27 @@ pub(crate) async fn send_request_handler(
             continue;
             // return send_request_handler(request, config, http_mode, redirect_count + 1).await;
         }
+        if enable_module_compiler
+            && parts
+                .headers
+                .get("X-COMPILE-MODULE-FOR-SANDBOX")
+                .is_some_and(|v| v == "1")
+        {
+            let (headers, body) = resp.into_parts();
+            let bytes = body.collect().await?;
+            let body = String::from_utf8(bytes.to_bytes().into())
+                .map_err(|_| ErrorCode::HttpResponseIncomplete)?;
+            let compiled_module =
+                compile_module(body).map_err(|_| ErrorCode::HttpResponseIncomplete)?;
+            let body = serde_json::to_string(&compiled_module)
+                .map_err(|_| ErrorCode::HttpResponseIncomplete)?;
+            let body = StringBody { inner: body };
+            return Ok(IncomingResponse {
+                resp: hyper::Response::from_parts(headers, BoxBody::new(body)),
+                worker: Some(worker),
+                between_bytes_timeout,
+            });
+        }
         return Ok(IncomingResponse {
             resp,
             worker: Some(worker),
@@ -325,6 +361,41 @@ pub(crate) async fn send_request_handler(
         });
     }
     unreachable!()
+}
+
+struct StringBody {
+    inner: String,
+}
+impl Body for StringBody {
+    type Data = Bytes;
+    type Error = ErrorCode;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> std::task::Poll<
+        std::option::Option<
+            std::result::Result<
+                hyper::body::Frame<hyper::body::Bytes>,
+                wasmtime_wasi_http::bindings::http::types::ErrorCode,
+            >,
+        >,
+    > {
+        if !self.inner.is_empty() {
+            let s = std::mem::take(&mut self.inner);
+            std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(s.into_bytes().into()))))
+        } else {
+            std::task::Poll::Ready(None)
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 async fn get_tcp_stream(

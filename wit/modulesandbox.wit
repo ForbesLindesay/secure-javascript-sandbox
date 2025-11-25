@@ -1,0 +1,5 @@
+package local:modulesandbox;
+
+world modulesandbox {
+  export evaluate: func(script: string, dynamicimport: bool, staticimports: list<string>, method: string, args: list<string>) -> result<string, string>;
+}

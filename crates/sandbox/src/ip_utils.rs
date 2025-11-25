@@ -54,7 +54,10 @@ trait IpUtilsV6Helper {
 }
 impl IpUtilsV6Helper for std::net::Ipv6Addr {
     fn is_documentation_ext(&self) -> bool {
-        matches!(self.segments(), [0x2001, 0xdb8, ..] | [0x3fff, 0..=0x0fff, ..])
+        matches!(
+            self.segments(),
+            [0x2001, 0xdb8, ..] | [0x3fff, 0..=0x0fff, ..]
+        )
     }
 }
 impl IpUtils for std::net::Ipv6Addr {

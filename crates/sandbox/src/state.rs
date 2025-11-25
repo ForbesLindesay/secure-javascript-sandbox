@@ -15,6 +15,7 @@ pub(crate) struct SandboxState {
     pub max_requested_memory_bytes: Option<usize>,
     pub max_requested_table_elements: Option<usize>,
     pub requests: Requests,
+    pub enable_module_compiler: bool,
 }
 
 impl WasiView for SandboxState {
@@ -40,8 +41,16 @@ impl WasiHttpView for SandboxState {
     ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
         let http_mode = self.http.clone();
         let requests = self.requests.clone();
+        let enable_module_compiler = self.enable_module_compiler;
         let handle = wasmtime_wasi::runtime::spawn(async move {
-            let result = send_request_handler(request, config, &http_mode, requests).await;
+            let result = send_request_handler(
+                request,
+                config,
+                &http_mode,
+                requests,
+                enable_module_compiler,
+            )
+            .await;
             Ok(result)
         });
         Ok(HostFutureIncomingResponse::pending(handle))

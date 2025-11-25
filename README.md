@@ -52,7 +52,7 @@ SANDBOX_MAX_TABLES="10_000"
 SANDBOX_MAX_MEMORIES="10_000"
 # Enable this to throw a WASM error when running out of memory,
 # instead of the default JavaScript out of memory error.
-SANDBOX_TRAP_ON_GROW_FAILURE="FALSE"
+SANDBOX_TRAP_ON_GROW_FAILURE="false"
 # The maximum number of bytes of stdout (i.e. console.log) to
 # record. If stdout exceeds this limit, andy further data will
 # just be dropped.
@@ -62,7 +62,7 @@ SANDBOX_STDOUT_MAX_BYTES="10_485_760"
 # just be dropped.
 SANDBOX_STDERR_MAX_BYTES="10_485_760"
 # Whether to allow outbound requests via the `fetch` function.
-SANDBOX_HTTP_MODE="DISABLED"
+SANDBOX_HTTP_MODE="BLOCK_ALL"
 ```
 
 There are 4 possible values for `SANDBOX_HTTP_MODE`
@@ -70,7 +70,7 @@ There are 4 possible values for `SANDBOX_HTTP_MODE`
 * `ALLOW_ALL` - allows all outbound requests without any restrictions.
 * `ALLOW_GLOBAL_IP_ONLY` - allows outbound requests only if the target is an IP address that's considered "Global".
 * `ALLOW_LIST_HOSTS:{hosts,}*` - allows outbound requests only to the specified list of host names. e.g. `ALLOW_LIST_HOSTS:example.com,example.org` would allow fetch requests to `example.com` and `example.org` but not to `example.net`.
-* `DISABLED` - blocks all outbound requests.
+* `BLOCK_ALL` - blocks all outbound requests.
 
 ### API
 
@@ -145,7 +145,7 @@ You can run the docker image by running:
 docker run --rm -it -p "3000:3000" forbeslindesay/secure-js-sandbox
 ```
 
-To publish the image:
+To publish the image (build takes approximately 10 minutes):
 
 ```sh
 docker login
