@@ -2,50 +2,113 @@ use std::sync::Arc;
 
 use serde::{Deserialize, de::DeserializeOwned};
 
-use secure_js_sandbox::{HttpMode, MemoryLimits};
-
-use crate::{
-    EvaluateFunctionInput, EvaluateFunctionRequest, EvaluateFunctionRequestWithConfig,
-    EvaluateModuleInput, EvaluateModuleRequest, EvaluateModuleRequestWithConfig, get_env,
+use secure_js_sandbox::{
+    EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes,
+    ResourceLimit, SandboxConfig, TableLimit,
 };
+
+use crate::env::get_env;
+use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
 
 fn cpu_fuel_default() -> u64 {
     440_000_000 // Approximately 100ms on my MacBook Pro.
 }
 
-pub trait SandboxServerConfigTrait<TEvaluateInput>: Send + Sync + 'static {
-    type RequestType: DeserializeOwned + Send + 'static;
-    fn get_evaluate_input(&self, request: Self::RequestType) -> TEvaluateInput;
+pub struct EvaluateInput {
+    pub code: String,
+    pub parameters: Vec<serde_json::Value>,
+    pub config: SandboxConfig,
 }
 
-impl<TEvaluateInput, T: SandboxServerConfigTrait<TEvaluateInput>>
-    SandboxServerConfigTrait<TEvaluateInput> for Arc<T>
+pub trait SandboxServerConfigTrait<TRequestType>: Send + Sync + 'static
+where
+    TRequestType: DeserializeOwned + Send + 'static,
 {
-    type RequestType = T::RequestType;
-    fn get_evaluate_input(&self, request: T::RequestType) -> TEvaluateInput {
-        (**self).get_evaluate_input(request)
+    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput;
+}
+
+impl<TRequestType: DeserializeOwned + Send + 'static, T: SandboxServerConfigTrait<TRequestType>>
+    SandboxServerConfigTrait<TRequestType> for Arc<T>
+{
+    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput {
+        self.as_ref().get_evaluate_input(request)
     }
 }
 
-#[derive(Clone, Deserialize)]
+fn default_trap_on_grow_failure() -> bool {
+    false
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SandboxServerMemoryLimits {
+    #[serde(default)]
+    pub memory_size_bytes: MemoryLimitBytes,
+    #[serde(default)]
+    pub table_elements: TableLimit,
+    #[serde(default)]
+    pub instances: ResourceLimit,
+    #[serde(default)]
+    pub tables: ResourceLimit,
+    #[serde(default)]
+    pub memories: ResourceLimit,
+    #[serde(default="default_trap_on_grow_failure")]
+    pub trap_on_grow_failure: bool,
+    #[serde(default)]
+    pub stdout_max_bytes: MemorySizeBytes,
+    #[serde(default)]
+    pub stderr_max_bytes: MemorySizeBytes,
+}
+impl SandboxServerMemoryLimits {
+    pub fn to_memory_limits(&self) -> MemoryLimits {
+        MemoryLimits {
+            memory_size_bytes: self.memory_size_bytes,
+            table_elements: self.table_elements,
+            instances: self.instances,
+            tables: self.tables,
+            memories: self.memories,
+            trap_on_grow_failure: false,
+            stderr_bytes: self.stderr_max_bytes,
+            stdout_bytes: self.stdout_max_bytes,
+        }
+    }
+}
+impl Default for SandboxServerMemoryLimits {
+    fn default() -> Self {
+        SandboxServerMemoryLimits {
+            memory_size_bytes: Default::default(),
+            table_elements: Default::default(),
+            instances: Default::default(),
+            tables: Default::default(),
+            memories: Default::default(),
+            trap_on_grow_failure: Default::default(),
+            stdout_max_bytes: Default::default(),
+            stderr_max_bytes: Default::default(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct SandboxServerConfig {
     #[serde(default = "cpu_fuel_default")]
     pub cpu_fuel: u64,
     #[serde(default)]
-    pub memory_limits: MemoryLimits,
+    pub memory_limits: SandboxServerMemoryLimits,
     #[serde(default)]
     pub http: HttpMode,
     #[serde(default)]
     pub enable_typescript_support: bool,
+    #[serde(default)]
+    pub module_method: Option<Box<str>>,
 }
 
 impl Default for SandboxServerConfig {
     fn default() -> Self {
         SandboxServerConfig {
             cpu_fuel: cpu_fuel_default(),
-            memory_limits: MemoryLimits::default(),
+            memory_limits: SandboxServerMemoryLimits::default(),
             http: HttpMode::BlockAll,
             enable_typescript_support: false,
+            module_method: None,
         }
     }
 }
@@ -57,10 +120,10 @@ impl SandboxServerConfig {
             config.cpu_fuel = cpu_fuel;
         }
         if let Some(max_memory_bytes) = get_env("SANDBOX_MAX_MEMORY_BYTES")? {
-            config.memory_limits.memory_size_bytes = Some(max_memory_bytes);
+            config.memory_limits.memory_size_bytes = max_memory_bytes;
         }
         if let Some(max_table_elements) = get_env("SANDBOX_MAX_TABLE_ELEMENTS")? {
-            config.memory_limits.table_elements = Some(max_table_elements);
+            config.memory_limits.table_elements = max_table_elements;
         }
         if let Some(instances) = get_env("SANDBOX_MAX_INSTANCES")? {
             config.memory_limits.instances = instances;
@@ -86,58 +149,52 @@ impl SandboxServerConfig {
         if let Some(enable_typescript_support) = get_env("SANDBOX_TYPESCRIPT_SUPPORT")? {
             config.enable_typescript_support = enable_typescript_support;
         }
+        if let Some(module_method) = get_env::<String>("SANDBOX_MODULE_METHOD")? {
+            config.module_method = Some(module_method.into_boxed_str());
+        }
 
         Ok(config)
     }
 }
 
-impl SandboxServerConfigTrait<EvaluateFunctionInput> for SandboxServerConfig {
-    type RequestType = EvaluateFunctionRequest;
-
-    fn get_evaluate_input(&self, request: Self::RequestType) -> EvaluateFunctionInput {
-        EvaluateFunctionInput {
-            script: request.script,
-            args: request.args,
-            config: self.clone(),
-        }
-    }
-}
-
-impl SandboxServerConfigTrait<EvaluateModuleInput> for SandboxServerConfig {
-    type RequestType = EvaluateModuleRequest;
-
-    fn get_evaluate_input(&self, request: Self::RequestType) -> EvaluateModuleInput {
-        EvaluateModuleInput {
+impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
+    fn get_evaluate_input(&self, request: EvaluateRequest) -> EvaluateInput {
+        EvaluateInput {
             code: request.code,
-            method: request.method,
-            args: request.args,
-            config: self.clone(),
+            parameters: request.parameters,
+            config: SandboxConfig {
+                cpu_fuel: self.cpu_fuel,
+                memory_limits: self.memory_limits.to_memory_limits(),
+                http: self.http.clone(),
+                mode: match &self.module_method {
+                    Some(method) => EvaluateMode::ModuleMethod(method.clone()),
+                    None => EvaluateMode::FunctionCall,
+                },
+                strip_typescript_types: self.enable_typescript_support,
+            },
         }
     }
 }
 
 pub struct AllowRequestToConfigureSandbox;
-impl SandboxServerConfigTrait<EvaluateFunctionInput> for AllowRequestToConfigureSandbox {
-    type RequestType = EvaluateFunctionRequestWithConfig;
-
-    fn get_evaluate_input(&self, request: Self::RequestType) -> EvaluateFunctionInput {
-        EvaluateFunctionInput {
-            script: request.script,
-            args: request.args,
-            config: request.config,
-        }
-    }
-}
-
-impl SandboxServerConfigTrait<EvaluateModuleInput> for AllowRequestToConfigureSandbox {
-    type RequestType = EvaluateModuleRequestWithConfig;
-
-    fn get_evaluate_input(&self, request: Self::RequestType) -> EvaluateModuleInput {
-        EvaluateModuleInput {
+impl SandboxServerConfigTrait<EvaluateRequestWithConfig> for AllowRequestToConfigureSandbox {
+    fn get_evaluate_input(
+        &self,
+        request: EvaluateRequestWithConfig,
+    ) -> EvaluateInput {
+        EvaluateInput {
             code: request.code,
-            method: request.method,
-            args: request.args,
-            config: request.config,
+            parameters: request.parameters,
+            config: SandboxConfig {
+                cpu_fuel: request.config.cpu_fuel,
+                memory_limits: request.config.memory_limits.to_memory_limits(),
+                http: request.config.http,
+                mode: match request.config.module_method {
+                    Some(method) => EvaluateMode::ModuleMethod(method),
+                    None => EvaluateMode::FunctionCall,
+                },
+                strip_typescript_types: request.config.enable_typescript_support,
+            },
         }
     }
 }

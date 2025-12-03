@@ -1,24 +1,41 @@
+#[cfg(target_env="p2")]
 use secure_js_sandbox_ts_utils::strip_types_only;
 
+#[cfg(target_env="p2")]
 mod bindings {
-    //! This module contains generated code for implementing
-    //! the `adder` world in `wit/world.wit`.
-    //!
-    //! The `path` option is actually not required,
-    //! as by default `wit_bindgen::generate` will look
-    //! for a top-level `wit` directory and use the files
-    //! (and interfaces/worlds) there-in.
-
     use crate::TsUtils;
     wit_bindgen::generate!({
-        path: "../../wit/tsutils.wit",
+        path: "wit/ts-utils.wit",
     });
     export!(TsUtils);
 }
 
+#[cfg(target_env="p2")]
+use bindings::exports::local::ts_utils::ts_utils_impl as bindings_impl;
+
+#[cfg(target_env="p2")]
 struct TsUtils;
-impl bindings::Guest for TsUtils {
-    fn striptypesonly(script: String) -> Result<String, String> {
+#[cfg(target_env="p2")]
+impl bindings_impl::Guest for TsUtils {
+    fn strip_types_only(script: String) -> Result<String, String> {
         strip_types_only(script).map_err(|e| e.to_string())
+    }
+
+    fn compile_module_only(script: String) -> Result<bindings_impl::CompiledModule, String> {
+        match secure_js_sandbox_ts_utils::compile_module(script) {
+            Ok(compiled) => Ok(bindings_impl::CompiledModule {
+                has_dynamic_import: compiled.has_dynamic_import,
+                static_imports: compiled.static_imports,
+                code: compiled.code,
+            }),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn strip_types_and_compile_module(
+        script: String,
+    ) -> Result<bindings_impl::CompiledModule, String> {
+        let stripped = TsUtils::strip_types_only(script)?;
+        TsUtils::compile_module_only(stripped)
     }
 }

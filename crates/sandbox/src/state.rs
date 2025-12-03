@@ -3,8 +3,9 @@ use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
 use wasmtime_wasi_http::types::HostFutureIncomingResponse;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
+use crate::MemoryLimitBytes;
 use crate::http::{HttpMode, Requests, send_request_handler};
-use crate::memory::MemoryLimits;
+use crate::memory::{MemoryLimits, TableLimit};
 
 pub(crate) struct SandboxState {
     pub wasi_ctx: WasiCtx,
@@ -15,7 +16,6 @@ pub(crate) struct SandboxState {
     pub max_requested_memory_bytes: Option<usize>,
     pub max_requested_table_elements: Option<usize>,
     pub requests: Requests,
-    pub enable_module_compiler: bool,
 }
 
 impl WasiView for SandboxState {
@@ -41,16 +41,8 @@ impl WasiHttpView for SandboxState {
     ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
         let http_mode = self.http.clone();
         let requests = self.requests.clone();
-        let enable_module_compiler = self.enable_module_compiler;
         let handle = wasmtime_wasi::runtime::spawn(async move {
-            let result = send_request_handler(
-                request,
-                config,
-                &http_mode,
-                requests,
-                enable_module_compiler,
-            )
-            .await;
+            let result = send_request_handler(request, config, &http_mode, requests).await;
             Ok(result)
         });
         Ok(HostFutureIncomingResponse::pending(handle))
@@ -69,7 +61,7 @@ impl ResourceLimiter for SandboxState {
             _ => Some(desired),
         };
         let allow = match self.limits.memory_size_bytes {
-            Some(limit) if desired > limit => false,
+            MemoryLimitBytes::Limited(limit) if desired > limit => false,
             _ => match maximum {
                 Some(max) if desired > max => false,
                 _ => true,
@@ -102,7 +94,7 @@ impl ResourceLimiter for SandboxState {
             _ => Some(desired),
         };
         let allow = match self.limits.table_elements {
-            Some(limit) if desired > limit => false,
+            TableLimit::Limited(limit) if desired > limit => false,
             _ => match maximum {
                 Some(max) if desired > max => false,
                 _ => true,
@@ -125,14 +117,14 @@ impl ResourceLimiter for SandboxState {
     }
 
     fn instances(&self) -> usize {
-        self.limits.instances
+        self.limits.instances.into()
     }
 
     fn tables(&self) -> usize {
-        self.limits.tables
+        self.limits.tables.into()
     }
 
     fn memories(&self) -> usize {
-        self.limits.memories
+        self.limits.memories.into()
     }
 }

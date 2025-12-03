@@ -230,40 +230,36 @@ mod tests {
         }
         let code = res.code;
         let arguments = arguments.join(",");
-        let engine = secure_js_sandbox::FunctionSandboxEngine::new().unwrap();
-        let mut sandbox = engine
-            .build(SandboxConfig {
-                cpu_fuel: 500_000_000_000,
-                memory_limits: Default::default(),
-                http: secure_js_sandbox::HttpMode::BlockAll,
-                ctx: secure_js_sandbox::WasiCtx::builder()
-                    .inherit_stdio()
-                    .build(),
-            })
-            .await
-            .unwrap();
-        sandbox
+        let engine = secure_js_sandbox::SandboxEngine::new().unwrap();
+        engine
             .evaluate(
                 &format!(
                     r#"
-            async function () {{
-                const result = await ({code})({arguments});
-                const _assert = (condition, message) => {{
-                    if (!condition) {{
-                        throw new Error("Assertion failed: " + message);
-                    }}
-                }};
-                console.log(result);
-                _assert(result.x() === 42, "x() should return 42");
-                _assert(result.y === 42, "y should be 42");
-                _assert(result.default() === 4, "default() should return 4");
-                _assert(result.asyncTheAnswer === 42, "default() should return 4");
-            }}
-        "#
+                        async function () {{
+                            const result = await ({code})({arguments});
+                            const _assert = (condition, message) => {{
+                                if (!condition) {{
+                                    throw new Error("Assertion failed: " + message);
+                                }}
+                            }};
+                            console.log(result);
+                            _assert(result.x() === 42, "x() should return 42");
+                            _assert(result.y === 42, "y should be 42");
+                            _assert(result.default() === 4, "default() should return 4");
+                            _assert(result.asyncTheAnswer === 42, "default() should return 4");
+                        }}
+                    "#
                 ),
                 &vec![],
+                SandboxConfig {
+                    cpu_fuel: 500_000_000_000,
+                    memory_limits: Default::default(),
+                    http: secure_js_sandbox::HttpMode::BlockAll,
+                    ..Default::default()
+                }
             )
             .await
+            .result
             .unwrap();
     }
 }

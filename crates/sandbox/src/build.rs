@@ -37,8 +37,35 @@ fn compile(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// /// Returns a vector of (input_path, output_path) for all wasm files to compile. It
+// /// finds the files by looking for any .wasm files in the sandboxes directory.
+// fn get_wasm_files() -> Vec<(String, String)> {
+//     let mut files = Vec::new();
+
+//     if let Ok(entries) = std::fs::read_dir("src/sandboxes") {
+//         for entry in entries.flatten() {
+//             if let Ok(path) = entry.path().canonicalize() {
+//                 if let Some(extension) = path.extension() {
+//                     if extension == "wasm" {
+//                         let input = entry.file_name().to_string_lossy().to_string();
+//                         let output = input.replace(".wasm", ".bin");
+//                         files.push((input, output));
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     files
+// }
+// fn main() -> Result<(), Box<dyn Error>> {
+//     for (input, output) in get_wasm_files() {
+//         compile(&format!("src/sandboxes/{}", input), &format!("src/sandboxes/{}", output))?;
+//     }
+//     Ok(())
+// }
+
 fn main() -> Result<(), Box<dyn Error>> {
     compile("src/sandbox.wasm", "src/sandbox.bin")?;
-    compile("src/modulesandbox.wasm", "src/modulesandbox.bin")?;
     Ok(())
 }

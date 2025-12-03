@@ -3,14 +3,10 @@ use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::task::Context;
 
 use http_body_util::BodyExt;
-use http_body_util::combinators::BoxBody;
-use hyper::body::{Body, Bytes};
 use hyper::header;
 use hyper::{Method, Uri};
-use secure_js_sandbox_ts_utils::compile_module;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
@@ -185,7 +181,6 @@ pub(crate) async fn send_request_handler(
     config: OutgoingRequestConfig,
     http_mode: &HttpMode,
     requests: Requests,
-    enable_module_compiler: bool,
 ) -> Result<IncomingResponse, ErrorCode> {
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
@@ -333,27 +328,6 @@ pub(crate) async fn send_request_handler(
             continue;
             // return send_request_handler(request, config, http_mode, redirect_count + 1).await;
         }
-        if enable_module_compiler
-            && parts
-                .headers
-                .get("X-COMPILE-MODULE-FOR-SANDBOX")
-                .is_some_and(|v| v == "1")
-        {
-            let (headers, body) = resp.into_parts();
-            let bytes = body.collect().await?;
-            let body = String::from_utf8(bytes.to_bytes().into())
-                .map_err(|_| ErrorCode::HttpResponseIncomplete)?;
-            let compiled_module =
-                compile_module(body).map_err(|_| ErrorCode::HttpResponseIncomplete)?;
-            let body = serde_json::to_string(&compiled_module)
-                .map_err(|_| ErrorCode::HttpResponseIncomplete)?;
-            let body = StringBody { inner: body };
-            return Ok(IncomingResponse {
-                resp: hyper::Response::from_parts(headers, BoxBody::new(body)),
-                worker: Some(worker),
-                between_bytes_timeout,
-            });
-        }
         return Ok(IncomingResponse {
             resp,
             worker: Some(worker),
@@ -361,41 +335,6 @@ pub(crate) async fn send_request_handler(
         });
     }
     unreachable!()
-}
-
-struct StringBody {
-    inner: String,
-}
-impl Body for StringBody {
-    type Data = Bytes;
-    type Error = ErrorCode;
-
-    fn poll_frame(
-        mut self: std::pin::Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> std::task::Poll<
-        std::option::Option<
-            std::result::Result<
-                hyper::body::Frame<hyper::body::Bytes>,
-                wasmtime_wasi_http::bindings::http::types::ErrorCode,
-            >,
-        >,
-    > {
-        if !self.inner.is_empty() {
-            let s = std::mem::take(&mut self.inner);
-            std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(s.into_bytes().into()))))
-        } else {
-            std::task::Poll::Ready(None)
-        }
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        self.inner.size_hint()
-    }
 }
 
 async fn get_tcp_stream(

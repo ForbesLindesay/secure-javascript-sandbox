@@ -58,7 +58,7 @@ function arg(name) {
   return idx === -1 ? undefined : process.argv[idx + 1]
 }
 function getRunForEndpoint(script, args, endpoint) {
-  const body = JSON.stringify({ script, args: JSON.parse(args) })
+  const body = JSON.stringify({ code: script, parameters: JSON.parse(args) })
   return async () => {
     const res = await fetch(endpoint, {
       method: 'POST',

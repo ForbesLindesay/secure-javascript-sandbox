@@ -26,7 +26,7 @@ server.listen(3001);
 const buildProc = spawn('cargo', [`build`], {
   stdio: 'inherit',
 })
-const buildProcExit = await new Promise((resolve) => buildProc.on('exit', resolve))
+const buildProcExit = await new Promise<number>((resolve) => buildProc.on('exit', resolve))
 if (buildProcExit !== 0) {
   process.exit(buildProcExit);
 }
@@ -38,7 +38,8 @@ const proc = spawn('cargo', [`run`, `secure_js_sandbox_server`], {
     SANDBOX_HTTP_MODE: "ALLOW_ALL",
     SANDBOX_TYPESCRIPT_SUPPORT: "true",
     SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT: "true",
-    SANDBOX_USE_MODULE_SYNTAX: "true",
+    SANDBOX_MODULE_METHOD: "run",
+    SANDBOX_CPU_FUEL: Number.MAX_SAFE_INTEGER.toString(),
   }
 })
 
@@ -60,10 +61,10 @@ while (timeout > Date.now() && successCount < 10) {
   }
 }
 
-async function run({script, args}: {script: string, args: any[]}) {
+async function run({code, parameters}: {code: string, parameters: any[]}) {
   const response = await fetch('http://localhost:3000/evaluate', {
     method: 'POST',
-    body: JSON.stringify({ script, args }),
+    body: JSON.stringify({ code, parameters }),
     headers: { 'Content-Type': 'application/json' },
   });
   if (!response.ok) {
@@ -71,19 +72,6 @@ async function run({script, args}: {script: string, args: any[]}) {
   }
   return response.json();
 }
-
-async function runModule({code, method, args}: {code: string, method: string, args: any[]}) {
-  const response = await fetch('http://localhost:3000/evaluate', {
-    method: 'POST',
-    body: JSON.stringify({ code, method, args }),
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status} body: ${await response.text()}`);
-  }
-  return response.json();
-}
-
 
 async function stripTypes(script: string) {
   const response = await fetch('http://localhost:3000/strip_types', {
@@ -101,13 +89,57 @@ async function stripTypes(script: string) {
   return outcome.script;
 }
 
-console.log(await runModule({
-  code: `import {fib} from 'http://localhost:3001/fib.js';
+console.log(await run({
+  code: `
+  export async function run(a: number, b: number) {
+    return a + b;
+  }`,
+  parameters: [40, 2]
+}))
+
+console.log(await run({
+  code: `
+  export async function run() {
+    console.log("Attempting to generate output");
+    console.error("This is going to throw");
+    throw new Error("Hello World".repeat(42));
+  }`,
+  parameters: []
+}))
+
+// console.log(await run({
+//   code: `
+//   export async function run() {
+//     for (let i = 0; i < 100; i++) {
+//       const res = await fetch('http://localhost:3001/fib.js');
+//       const data = await res.text();
+//     }
+// }`,  parameters: []
+// }))
+
+console.log(await run({
+  code: `import { fib } from 'http://localhost:3001/fib.js';
   export async function run(n: number) {
     return fib(n);
   }`,
-  method: "run",
-  args: [10]
+  parameters: [10]
+}))
+console.log(await run({
+  code: `// import {fib} from 'http://localhost:3001/fib.js';
+  export async function run(n: number) {
+    const { fib } = await import('http://localhost:3001/fib.js');
+    return fib(n);
+  }`,
+  parameters: [10]
+}))
+
+console.log(await run({
+  code: `// import {fib} from 'http://localhost:3001/fib.js';
+  export async function run(n: number) {
+    const { default: fib } = await import('http://localhost:3001/fib.js');
+    return fib(n);
+  }`,
+  parameters: [10]
 }))
 
 

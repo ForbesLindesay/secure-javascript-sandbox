@@ -5,8 +5,8 @@ use axum::{
     routing::{get, post},
 };
 use secure_js_sandbox_axum_handler::{
-    AllowRequestToConfigureSandbox, SandboxServerConfig, create_evaluate_function_handler,
-    create_evaluate_module_handler, create_strip_types_handler, get_env,
+    AllowRequestToConfigureSandbox, SandboxServerConfig, create_evaluate_handler,
+    create_strip_types_handler, get_env,
 };
 
 mod signal;
@@ -26,30 +26,16 @@ pub async fn start_server() -> anyhow::Result<()> {
     let mut app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root));
-    if get_env("SANDBOX_USE_MODULE_SYNTAX")?.unwrap_or(false) {
-        if get_env("SANDBOX_ALLOW_CONFIG_IN_REQUEST")?.unwrap_or(false) {
-            app = app.route(
-                "/evaluate",
-                post(create_evaluate_module_handler(AllowRequestToConfigureSandbox).await?),
-            );
-        } else {
-            app = app.route(
-                "/evaluate",
-                post(create_evaluate_module_handler(SandboxServerConfig::from_env()?).await?),
-            );
-        }
+    if get_env("SANDBOX_ALLOW_CONFIG_IN_REQUEST")?.unwrap_or(false) {
+        app = app.route(
+            "/evaluate",
+            post(create_evaluate_handler(AllowRequestToConfigureSandbox).await?),
+        );
     } else {
-        if get_env("SANDBOX_ALLOW_CONFIG_IN_REQUEST")?.unwrap_or(false) {
-            app = app.route(
-                "/evaluate",
-                post(create_evaluate_function_handler(AllowRequestToConfigureSandbox).await?),
-            );
-        } else {
-            app = app.route(
-                "/evaluate",
-                post(create_evaluate_function_handler(SandboxServerConfig::from_env()?).await?),
-            );
-        }
+        app = app.route(
+            "/evaluate",
+            post(create_evaluate_handler(SandboxServerConfig::from_env()?).await?),
+        );
     }
 
     if get_env("SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT")?.unwrap_or(false) {

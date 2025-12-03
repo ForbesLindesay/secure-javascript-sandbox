@@ -1,7 +1,7 @@
 for V in {1..10}; do
   time curl -X POST http://localhost:3000/evaluate \
     -H 'Content-Type: application/json' \
-    -d '{"script": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "args": [13]}';
+    -d '{"code": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "parameters": [13]}';
 done
 
 
