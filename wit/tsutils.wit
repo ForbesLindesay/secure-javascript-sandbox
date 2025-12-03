@@ -1,0 +1,9 @@
+package local:tsutils;
+
+interface tsutils {
+  striptypesonly: func(script: string) -> result<string, string>;
+}
+
+world tsutils {
+  export tsutils;
+}

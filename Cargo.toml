@@ -6,6 +6,7 @@ members = [
     "crates/sandbox",
     "crates/server",
     "crates/ts_utils",
+    "crates/ts_utils_wasm",
 ]
 
 [patch.crates-io]

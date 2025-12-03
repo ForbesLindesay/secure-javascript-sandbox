@@ -1,5 +1,6 @@
 package local:modulesandbox;
 
 world modulesandbox {
+  import local:tsutils/tsutils;
   export evaluate: func(script: string, dynamicimport: bool, staticimports: list<string>, method: string, args: list<string>) -> result<string, string>;
 }

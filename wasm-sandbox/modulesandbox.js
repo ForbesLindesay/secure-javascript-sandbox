@@ -1,4 +1,8 @@
 // TODO: handle cycles
+import {striptypesonly} from "local:tsutils";
+
+console.log("striptypesonly=", striptypesonly)
+
 const moduleCache = new Map()
 async function $import(moduleName) {
   if (moduleCache.has(moduleName)) {
