@@ -8,7 +8,7 @@ async function output(fn) {
     console.log(`8C47F950-3E81-46B1-976E-177A89380038`)
   } catch (error) {
     console.error(`E8FEE14A-BBF5-4B08-9E00-6D61189D897D`)
-    console.error(error)
+    console.error(formatError(error))
   }
 }
 export async function evaluateModule(code, method, args, stripTypes) {
@@ -62,4 +62,17 @@ export async function evaluate(code, args, stripTypes) {
     }
     return await fn(...args.map(arg => JSON.parse(arg)))
   })
+}
+
+function formatError(error) {
+  if (!error) {
+    return 'Unknown error'
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  if (typeof error.message === 'string' && error.stack && !`${error.stack}`.includes(error.message)) {
+    return `${error.message}\n${error.stack}`
+  }
+  return `${error.stack || error.message || error}`
 }

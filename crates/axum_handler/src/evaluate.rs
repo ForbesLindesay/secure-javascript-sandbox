@@ -44,7 +44,7 @@ pub async fn evaluate<
         parameters,
         config,
     } = config.get_evaluate_input(request);
-    let initial_cpu_fuel = config.cpu_fuel;
+    let initial_cpu_fuel: u64 = config.cpu_fuel.into();
     let result = engine.evaluate(&code, &parameters, config).await;
     Ok(EvaluateResponse {
         success: result.result.is_ok(),

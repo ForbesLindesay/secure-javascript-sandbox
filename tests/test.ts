@@ -36,10 +36,13 @@ const proc = spawn('cargo', [`run`, `secure_js_sandbox_server`], {
   env: {
     ...process.env,
     SANDBOX_HTTP_MODE: "ALLOW_ALL",
-    SANDBOX_TYPESCRIPT_SUPPORT: "true",
+    SANDBOX_AUTO_STRIP_TYPES: "true",
     SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT: "true",
+    SANDBOX_ENABLE_VALIDATE_MODULE_ENDPOINT: "true",
     SANDBOX_MODULE_METHOD: "run",
-    SANDBOX_CPU_FUEL: Number.MAX_SAFE_INTEGER.toString(),
+    SANDBOX_REQUEST_LIMIT: "10",
+    TS_UTILS_CPU_FUEL: `1_000_000`,
+    TS_UTILS_MAX_MEMORY_BYTES: `10MB`,
   }
 })
 
@@ -73,10 +76,10 @@ async function run({code, parameters}: {code: string, parameters: any[]}) {
   return response.json();
 }
 
-async function stripTypes(script: string) {
+async function stripTypes(code: string) {
   const response = await fetch('http://localhost:3000/strip_types', {
     method: 'POST',
-    body: JSON.stringify({ script }),
+    body: JSON.stringify({ code }),
     headers: { 'Content-Type': 'application/json' },
   });
   if (!response.ok) {
@@ -86,7 +89,19 @@ async function stripTypes(script: string) {
   if (!outcome.success) {
     throw new Error(`Strip types failed: ${outcome.error}`);
   }
-  return outcome.script;
+  return outcome.code;
+}
+async function validateModule(code: string, mode?: "JAVASCRIPT" | "TYPESCRIPT") {
+  const response = await fetch('http://localhost:3000/validate_module', {
+    method: 'POST',
+    body: JSON.stringify({ code, mode }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status} body: ${await response.text()}`);
+  }
+  const outcome = await response.json();
+  return outcome;
 }
 
 console.log(await run({
@@ -142,6 +157,15 @@ console.log(await run({
   parameters: [10]
 }))
 
+console.log(await run({
+  code: `export async function run() {
+    for (let i = 0; i < 1_000_000; i++) {
+      const res = await fetch("http://example.com");
+      await res.text();
+    }
+  }`,
+  parameters: []
+}))
 
 // console.log(await run({
 //   script: `async () => {
@@ -171,7 +195,37 @@ console.log(
     `
   )
 );
-
+console.log(
+  await validateModule(
+  `
+      import fib from "http://example.com/fib.js";
+      export async function run(n) {
+        return fib(n);
+      }
+    `
+  )
+);
+console.log(
+  await validateModule(
+  `
+      import fib from "http://example.com/fib.js";
+      export async function run(n: number) {
+        return fib(n);
+      }
+    `,
+    "TYPESCRIPT"
+  )
+);
+console.log(
+  await validateModule(
+  `
+      import fib from "http://example.com/fib.js";
+      export async function run(n: number) {
+        return fib(n);
+      }
+    `
+  )
+);
 
 // console.log(await run({
 //   script: `async function run() {

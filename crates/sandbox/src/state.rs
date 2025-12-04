@@ -1,21 +1,24 @@
 use wasmtime::ResourceLimiter;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
+use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::types::HostFutureIncomingResponse;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-use crate::MemoryLimitBytes;
+use crate::{MemoryLimitBytes, RequestLimit, RequestValidationOutcome, TableLimit};
 use crate::http::{HttpMode, Requests, send_request_handler};
-use crate::memory::{MemoryLimits, TableLimit};
+use crate::memory::{MemoryLimits};
 
 pub(crate) struct SandboxState {
     pub wasi_ctx: WasiCtx,
     pub resource_table: ResourceTable,
-    pub limits: MemoryLimits,
+    pub memory_limits: MemoryLimits,
     pub wasi_http: WasiHttpCtx,
     pub http: HttpMode,
+    pub request_limit: RequestLimit,
     pub max_requested_memory_bytes: Option<usize>,
     pub max_requested_table_elements: Option<usize>,
     pub requests: Requests,
+    pub request_count: usize,
 }
 
 impl WasiView for SandboxState {
@@ -39,6 +42,13 @@ impl WasiHttpView for SandboxState {
         request: hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
         config: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
+        self.request_count = self.request_count.saturating_add(1);
+        if let RequestLimit::Limited(max) = self.request_limit {
+            if self.request_count > max {
+                self.requests.push((request.uri().clone(), None, RequestValidationOutcome::Blocked));
+                return Ok(HostFutureIncomingResponse::ready(Ok(Err(ErrorCode::ConnectionLimitReached))));
+            }
+        }
         let http_mode = self.http.clone();
         let requests = self.requests.clone();
         let handle = wasmtime_wasi::runtime::spawn(async move {
@@ -60,14 +70,14 @@ impl ResourceLimiter for SandboxState {
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
         };
-        let allow = match self.limits.memory_size_bytes {
+        let allow = match self.memory_limits.memory_size_bytes {
             MemoryLimitBytes::Limited(limit) if desired > limit => false,
             _ => match maximum {
                 Some(max) if desired > max => false,
                 _ => true,
             },
         };
-        if !allow && self.limits.trap_on_grow_failure {
+        if !allow && self.memory_limits.trap_on_grow_failure {
             anyhow::bail!("forcing trap when growing memory to {desired} bytes")
         } else {
             Ok(allow)
@@ -75,7 +85,7 @@ impl ResourceLimiter for SandboxState {
     }
 
     fn memory_grow_failed(&mut self, error: anyhow::Error) -> anyhow::Result<()> {
-        if self.limits.trap_on_grow_failure {
+        if self.memory_limits.trap_on_grow_failure {
             Err(error.context("forcing a memory growth failure to be a trap"))
         } else {
             // log::debug!("ignoring memory growth failure error: {error:?}");
@@ -93,14 +103,14 @@ impl ResourceLimiter for SandboxState {
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
         };
-        let allow = match self.limits.table_elements {
+        let allow = match self.memory_limits.table_elements {
             TableLimit::Limited(limit) if desired > limit => false,
             _ => match maximum {
                 Some(max) if desired > max => false,
                 _ => true,
             },
         };
-        if !allow && self.limits.trap_on_grow_failure {
+        if !allow && self.memory_limits.trap_on_grow_failure {
             anyhow::bail!("forcing trap when growing table to {desired} elements")
         } else {
             Ok(allow)
@@ -108,7 +118,7 @@ impl ResourceLimiter for SandboxState {
     }
 
     fn table_grow_failed(&mut self, error: anyhow::Error) -> anyhow::Result<()> {
-        if self.limits.trap_on_grow_failure {
+        if self.memory_limits.trap_on_grow_failure {
             Err(error.context("forcing a table growth failure to be a trap"))
         } else {
             // log::debug!("ignoring table growth failure error: {error:?}");
@@ -117,14 +127,14 @@ impl ResourceLimiter for SandboxState {
     }
 
     fn instances(&self) -> usize {
-        self.limits.instances.into()
+        self.memory_limits.instances.into()
     }
 
     fn tables(&self) -> usize {
-        self.limits.tables.into()
+        self.memory_limits.tables.into()
     }
 
     fn memories(&self) -> usize {
-        self.limits.memories.into()
+        self.memory_limits.memories.into()
     }
 }

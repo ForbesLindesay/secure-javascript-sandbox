@@ -7,7 +7,7 @@ WORKDIR /usr/src/secure-javascript-sandbox
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 COPY ./crates ./crates
-COPY ./wit ./wit
+
 # RUN cargo build --bin secure_js_sandbox_interpreter_boa --release --target wasm32-wasip2
 RUN cargo build --release
 RUN cargo install --path crates/server

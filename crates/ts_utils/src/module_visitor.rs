@@ -91,6 +91,7 @@ pub enum Export {
     },
     ExportAll {
         local: Atom,
+        source: Str,
     },
 }
 
@@ -291,7 +292,7 @@ impl Visit for ModuleVisitor {
             source: *node.src.clone(),
             pattern: ModuleInputPattern::Ident(ident.clone()),
         });
-        self.exports.push(Export::ExportAll { local: ident });
+        self.exports.push(Export::ExportAll { local: ident, source: *node.src.clone() });
     }
     fn visit_named_export(&mut self, node: &NamedExport) {
         self.replacements

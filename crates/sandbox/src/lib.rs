@@ -2,16 +2,20 @@
 
 mod http;
 mod ip_utils;
+mod limit_values;
 mod memory;
 mod sandbox;
 mod state;
+mod tsutils;
 
 pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
-pub use memory::{MemoryLimitBytes, MemoryLimits, MemorySizeBytes, ResourceLimit, TableLimit};
+pub use limit_values::{CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit};
+pub use memory::MemoryLimits;
 pub use sandbox::{
     EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine,
 };
+pub use tsutils::{TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig, TsUtilsSandboxInstance, ValidateModuleMode};
 pub use wasmtime::{StoreLimits, StoreLimitsBuilder};
 pub use wasmtime_wasi::WasiCtx;
 pub use wasmtime_wasi::p2::pipe::MemoryOutputPipe;

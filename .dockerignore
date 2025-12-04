@@ -1,3 +1,4 @@
 target/
-wasm-sandbox/
+sandbox/
 crates/sandbox/src/sandbox.bin
+crates/sandbox/src/tsutils.bin

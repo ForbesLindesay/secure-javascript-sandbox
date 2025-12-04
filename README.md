@@ -41,7 +41,7 @@ SANDBOX_CPU_FUEL="440_000_000"
 # How much memory (in bytes) to allow each sandboxed function
 # to use. This includes the memory for the Spidermonkey VM
 # itself. Defaults to 128MB.
-SANDBOX_MAX_MEMORY_BYTES="134_217_728"
+SANDBOX_MAX_MEMORY_BYTES="128MB"
 # Set a limit on the number of "tables elements" within the WASM VM
 SANDBOX_MAX_TABLE_ELEMENTS="100_000"
 # Set a limit on the number of "instances" within the WASM VM
@@ -56,13 +56,36 @@ SANDBOX_TRAP_ON_GROW_FAILURE="false"
 # The maximum number of bytes of stdout (i.e. console.log) to
 # record. If stdout exceeds this limit, andy further data will
 # just be dropped.
-SANDBOX_STDOUT_MAX_BYTES="10_485_760"
+SANDBOX_STDOUT_MAX_BYTES="10MB"
 # The maximum number of bytes of stderr (i.e. console.error) to
 # record. If stderr exceeds this limit, andy further data will
 # just be dropped.
-SANDBOX_STDERR_MAX_BYTES="10_485_760"
+SANDBOX_STDERR_MAX_BYTES="10MB"
 # Whether to allow outbound requests via the `fetch` function.
 SANDBOX_HTTP_MODE="BLOCK_ALL"
+# Enable this to automatically strip types before evaluating
+# the code passed to the "/evaluate" endpoint. This does incur
+# a small performance overhead.
+SANDBOX_AUTO_STRIP_TYPES="false"
+# Set this to a string to treat the `code` passed to the /evaluate
+# endpoint as an ESModule that exports a method with this name,
+# instead of treating it as a function expression. This does incur
+# a small performance overhead.
+SANDBOX_MODULE_METHOD=NULL
+
+# Whether to expose a /strip_types endpoint to remove TypeScript
+# annotations from JavaScript, 
+SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT="false"
+
+# These settings are equivalent to the SANDBOX_ variants above, but apply
+# to the /strip_types and /validate_module endpoints instead of the /evaluate
+# endpoint
+TS_UTILS_CPU_FUEL=SANDBOX_CPU_FUEL
+TS_UTILS_MAX_MEMORY_BYTES=TS_UTILS_MAX_MEMORY_BYTES
+TS_UTILS_MAX_TABLE_ELEMENTS=TS_UTILS_MAX_TABLE_ELEMENTS
+TS_UTILS_MAX_INSTANCES=TS_UTILS_MAX_INSTANCES
+TS_UTILS_MAX_TABLES=TS_UTILS_MAX_TABLES
+TS_UTILS_MAX_MEMORIES=TS_UTILS_MAX_MEMORIES
 ```
 
 There are 4 possible values for `SANDBOX_HTTP_MODE`
@@ -81,7 +104,7 @@ Example:
 ```sh
   time curl -X POST http://localhost:3000/evaluate \
     -H 'Content-Type: application/json' \
-    -d '{"script": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "args": [13]}';
+    -d '{"code": "function fib(n) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "parameters": [13]}';
 ```
 
 Request:
@@ -89,14 +112,20 @@ Request:
 ```typescript
 interface EvaluateRequest {
   /**
+   * If in function mode:
+   * 
    * A function expression to be evaluated. The function can be async, allowing for the use
    * of `fetch` and things like timers.
+   * 
+   * If in module mode:
+   * 
+   * An ESModule exporting a function with the expected name. The function can be async.
    */
-  script: string;
+  code: string;
   /**
    * A list of arguments to pass in to the function defined by `script`.
    */
-  args: unknown[];
+  parameters: unknown[];
 }
 ```
 
@@ -127,15 +156,117 @@ interface EvaluateResponse {
 }
 ```
 
+#### POST `/strip_types`
+
+Example:
+
+```sh
+  time curl -X POST http://localhost:3000/strip_types \
+    -H 'Content-Type: application/json' \
+    -d '{"code": "function fib(n: number) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }"}';
+```
+
+Request:
+
+```typescript
+interface StripTypesRequest {
+  /**
+   * The TypeScript code to remove type annotations from.
+   */
+  code: string;
+}
+```
+
+Response:
+
+```typescript
+interface StripTypesResponse_Success {
+  success: true;
+  /**
+   * The code with TypeScript annotations removed.
+   */
+  code: string;
+}
+interface StripTypesResponse_Error {
+  success: false;
+  /**
+   * A string describing why we couldn't remove TypeScript annotations.
+   */
+  error: string;
+}
+```
+
+#### POST `/validate_module`
+
+Example:
+
+```sh
+  time curl -X POST http://localhost:3000/validate_module \
+    -H 'Content-Type: application/json' \
+    -d '{"code": "export function fib(n: number) { return n <= 1 ? 1 : fib(n-1) + fib(n-2); }", "mode": "TYPESCRIPT"}';
+```
+
+Request:
+
+```typescript
+interface ValidateModuleRequest {
+  /**
+   * The ESModule code to validate
+   */
+  code: string;
+  /**
+   * Whether to strip types before validating the module.
+   * Defaults to "JAVASCRIPT", which does not strip types.
+   */
+  mode: "JAVASCRIPT" | "TYPESCRIPT";
+}
+```
+
+Response:
+
+```typescript
+interface ValidateModuleResponse_Success {
+  success: true;
+  /**
+   * A boolean indicating whether a call to the dynamic
+   * `import(str)` function is present in the module.
+   */
+  has_dynamic_import: boolean;
+  /**
+   * A list of URLs that are imported statically via
+   * import {specifiers} from "source"
+   */
+  static_imports: string[];
+  /**
+   * A list of exports. If there is a default export, the
+   * string "default" will appear in this list.
+   */
+  named_exports: string[];
+  /**
+   * A list of URLs that are re-exported via
+   * export * from "source"
+   */
+  star_exports: string[];
+}
+interface ValidateModuleResponse_Error {
+  success: false;
+  /**
+   * A string describing why we couldn't validate the module.
+   */
+  error: string;
+}
+```
+
 ## Development Setup
 
-1. Build the wasm-sandbox by running `cd wasm-sandbox && npm install && npm build`
-2. Run the server using `cargo run --bin secure_js_sandbox_server`
+1. Build the wasm code by running `cd sandbox && npm install && node --run build -- --release`
+2. Run the server using `cargo run secure_js_sandbox_server`
 3. Run tests via `zsh tests/some-file.zsh`
 
 You can build the docker image by running:
 
 ```sh
+cd sandbox && npm install && node --run build -- --release && cd .. && \
 docker build -t forbeslindesay/secure-js-sandbox .
 ```
 
@@ -154,6 +285,7 @@ docker buildx create \
   --name container \
   --driver=docker-container
 
+cd sandbox && npm install && node --run build -- --release && cd .. && \
 docker buildx build \
   --tag forbeslindesay/secure-js-sandbox:latest \
   --platform linux/arm64,linux/amd64 \

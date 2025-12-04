@@ -5,8 +5,7 @@ use axum::{
     routing::{get, post},
 };
 use secure_js_sandbox_axum_handler::{
-    AllowRequestToConfigureSandbox, SandboxServerConfig, create_evaluate_handler,
-    create_strip_types_handler, get_env,
+    AllowRequestToConfigureSandbox, SandboxServerConfig, TsUtilsHandler, create_evaluate_handler, create_strip_types_handler, create_validate_module_handler, get_env
 };
 
 mod signal;
@@ -38,8 +37,22 @@ pub async fn start_server() -> anyhow::Result<()> {
         );
     }
 
-    if get_env("SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT")?.unwrap_or(false) {
-        app = app.route("/strip_types", post(create_strip_types_handler()));
+    let enable_strip_types_endpoint = get_env("SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT")?.unwrap_or(false);
+    let enable_validate_module_endpoint = get_env("SANDBOX_ENABLE_VALIDATE_MODULE_ENDPOINT")?.unwrap_or(false);
+    if enable_strip_types_endpoint || enable_validate_module_endpoint {
+        let handler = TsUtilsHandler::from_env()?;
+        if enable_strip_types_endpoint {
+            app = app.route(
+                "/strip_types",
+                post(create_strip_types_handler(handler.clone())),
+            );
+        }
+        if enable_validate_module_endpoint {
+            app = app.route(
+                "/validate_module",
+                post(create_validate_module_handler(handler)),
+            );
+        }
     }
 
     // run our app with hyper, listening globally on port 3000

@@ -67,5 +67,6 @@ fn compile(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     compile("src/sandbox.wasm", "src/sandbox.bin")?;
+    compile("src/tsutils.wasm", "src/tsutils.bin")?;
     Ok(())
 }

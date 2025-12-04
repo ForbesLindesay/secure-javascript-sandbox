@@ -3,16 +3,11 @@ use std::sync::Arc;
 use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
-    EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes,
-    ResourceLimit, SandboxConfig, TableLimit,
+    CpuFuel, EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, TableLimit
 };
 
 use crate::env::get_env;
 use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
-
-fn cpu_fuel_default() -> u64 {
-    440_000_000 // Approximately 100ms on my MacBook Pro.
-}
 
 pub struct EvaluateInput {
     pub code: String,
@@ -58,6 +53,13 @@ pub struct SandboxServerMemoryLimits {
     #[serde(default)]
     pub stderr_max_bytes: MemorySizeBytes,
 }
+macro_rules! set_from_env {
+    ($self:ident, $field:ident, $prefix:expr, $env_var:expr) => {
+        if let Some(value) = get_env(&format!("{}_{}", $prefix, $env_var))? {
+            $self.$field = value;
+        }
+    }
+}
 impl SandboxServerMemoryLimits {
     pub fn to_memory_limits(&self) -> MemoryLimits {
         MemoryLimits {
@@ -70,6 +72,17 @@ impl SandboxServerMemoryLimits {
             stderr_bytes: self.stderr_max_bytes,
             stdout_bytes: self.stdout_max_bytes,
         }
+    }
+    pub(crate) fn set_from_env(&mut self, prefix: &str) -> anyhow::Result<()> {
+        set_from_env!(self, memory_size_bytes, prefix, "MAX_MEMORY_BYTES");
+        set_from_env!(self, table_elements, prefix, "MAX_TABLE_ELEMENTS");
+        set_from_env!(self, instances, prefix, "MAX_INSTANCES");
+        set_from_env!(self, tables, prefix, "MAX_TABLES");
+        set_from_env!(self, memories, prefix, "MAX_MEMORIES");
+        set_from_env!(self, trap_on_grow_failure, prefix, "TRAP_ON_GROW_FAILURE");
+        set_from_env!(self, stdout_max_bytes, prefix, "STDOUT_MAX_BYTES");
+        set_from_env!(self, stderr_max_bytes, prefix, "STDERR_MAX_BYTES");
+        Ok(())
     }
 }
 impl Default for SandboxServerMemoryLimits {
@@ -89,14 +102,16 @@ impl Default for SandboxServerMemoryLimits {
 
 #[derive(Deserialize)]
 pub struct SandboxServerConfig {
-    #[serde(default = "cpu_fuel_default")]
-    pub cpu_fuel: u64,
+    #[serde(default)]
+    pub cpu_fuel: CpuFuel,
     #[serde(default)]
     pub memory_limits: SandboxServerMemoryLimits,
     #[serde(default)]
     pub http: HttpMode,
     #[serde(default)]
-    pub enable_typescript_support: bool,
+    pub request_limit: RequestLimit,
+    #[serde(default)]
+    pub sandbox_auto_strip_types: bool,
     #[serde(default)]
     pub module_method: Option<Box<str>>,
 }
@@ -104,10 +119,11 @@ pub struct SandboxServerConfig {
 impl Default for SandboxServerConfig {
     fn default() -> Self {
         SandboxServerConfig {
-            cpu_fuel: cpu_fuel_default(),
-            memory_limits: SandboxServerMemoryLimits::default(),
-            http: HttpMode::BlockAll,
-            enable_typescript_support: false,
+            cpu_fuel: Default::default(),
+            memory_limits: Default::default(),
+            http: Default::default(),
+            request_limit: Default::default(),
+            sandbox_auto_strip_types: false,
             module_method: None,
         }
     }
@@ -116,38 +132,18 @@ impl Default for SandboxServerConfig {
 impl SandboxServerConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = Self::default();
+        config.memory_limits.set_from_env("SANDBOX")?;
         if let Some(cpu_fuel) = get_env("SANDBOX_CPU_FUEL")? {
             config.cpu_fuel = cpu_fuel;
-        }
-        if let Some(max_memory_bytes) = get_env("SANDBOX_MAX_MEMORY_BYTES")? {
-            config.memory_limits.memory_size_bytes = max_memory_bytes;
-        }
-        if let Some(max_table_elements) = get_env("SANDBOX_MAX_TABLE_ELEMENTS")? {
-            config.memory_limits.table_elements = max_table_elements;
-        }
-        if let Some(instances) = get_env("SANDBOX_MAX_INSTANCES")? {
-            config.memory_limits.instances = instances;
-        }
-        if let Some(tables) = get_env("SANDBOX_MAX_TABLES")? {
-            config.memory_limits.tables = tables;
-        }
-        if let Some(memories) = get_env("SANDBOX_MAX_MEMORIES")? {
-            config.memory_limits.memories = memories;
-        }
-        if let Some(trap_on_grow_failure) = get_env("SANDBOX_TRAP_ON_GROW_FAILURE")? {
-            config.memory_limits.trap_on_grow_failure = trap_on_grow_failure;
-        }
-        if let Some(stdout_max_bytes) = get_env("SANDBOX_STDOUT_MAX_BYTES")? {
-            config.memory_limits.stdout_max_bytes = stdout_max_bytes;
-        }
-        if let Some(stderr_max_bytes) = get_env("SANDBOX_STDERR_MAX_BYTES")? {
-            config.memory_limits.stderr_max_bytes = stderr_max_bytes;
         }
         if let Some(http) = get_env("SANDBOX_HTTP_MODE")? {
             config.http = http;
         }
-        if let Some(enable_typescript_support) = get_env("SANDBOX_TYPESCRIPT_SUPPORT")? {
-            config.enable_typescript_support = enable_typescript_support;
+        if let Some(request_limit) = get_env("SANDBOX_REQUEST_LIMIT")? {
+            config.request_limit = request_limit;
+        }
+        if let Some(sandbox_auto_strip_types) = get_env("SANDBOX_AUTO_STRIP_TYPES")? {
+            config.sandbox_auto_strip_types = sandbox_auto_strip_types;
         }
         if let Some(module_method) = get_env::<String>("SANDBOX_MODULE_METHOD")? {
             config.module_method = Some(module_method.into_boxed_str());
@@ -166,11 +162,12 @@ impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
                 cpu_fuel: self.cpu_fuel,
                 memory_limits: self.memory_limits.to_memory_limits(),
                 http: self.http.clone(),
+                request_limit: self.request_limit,
                 mode: match &self.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method.clone()),
                     None => EvaluateMode::FunctionCall,
                 },
-                strip_typescript_types: self.enable_typescript_support,
+                strip_typescript_types: self.sandbox_auto_strip_types,
             },
         }
     }
@@ -189,11 +186,12 @@ impl SandboxServerConfigTrait<EvaluateRequestWithConfig> for AllowRequestToConfi
                 cpu_fuel: request.config.cpu_fuel,
                 memory_limits: request.config.memory_limits.to_memory_limits(),
                 http: request.config.http,
+                request_limit: request.config.request_limit,
                 mode: match request.config.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method),
                     None => EvaluateMode::FunctionCall,
                 },
-                strip_typescript_types: request.config.enable_typescript_support,
+                strip_typescript_types: request.config.sandbox_auto_strip_types,
             },
         }
     }

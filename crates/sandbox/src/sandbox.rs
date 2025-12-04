@@ -6,7 +6,7 @@ use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
 use crate::state::SandboxState;
-use crate::{HttpMode, MemoryLimits};
+use crate::{CpuFuel, HttpMode, MemoryLimits, RequestLimit};
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -20,11 +20,13 @@ mod bindings {
 #[derive(Clone)]
 pub struct SandboxConfig {
     /// Limit of CPU instructions that can be executed in this sandbox.
-    pub cpu_fuel: u64,
+    pub cpu_fuel: CpuFuel,
     /// Limit the memory that can be allocated by the sandbox.
     pub memory_limits: MemoryLimits,
     /// Allow/block outbound http(s) requests.
     pub http: HttpMode,
+    /// Limit the number of outbound HTTP requests that can be made.
+    pub request_limit: RequestLimit,
     /// Evaluate as a module by calling an exported method, or as a function expression.
     pub mode: EvaluateMode,
     /// Whether to strip TypeScript type annotations from the code before evaluating - if it's a module, only the initial module has types stripped.
@@ -33,10 +35,11 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            cpu_fuel: 440_000_000,
-            memory_limits: MemoryLimits::default(),
-            http: HttpMode::BlockAll,
-            mode: EvaluateMode::FunctionCall,
+            cpu_fuel: Default::default(),
+            memory_limits: Default::default(),
+            http: Default::default(),
+            request_limit: Default::default(),
+            mode: Default::default(),
             strip_typescript_types: false,
         }
     }
@@ -80,9 +83,10 @@ impl SandboxEngine {
 
     async fn build(
         &self,
-        cpu_fuel: u64,
+        cpu_fuel: CpuFuel,
         memory_limits: MemoryLimits,
         http: HttpMode,
+        request_limit: RequestLimit,
     ) -> anyhow::Result<SandboxInstance> {
         let stdout = MemoryOutputPipe::new(memory_limits.stdout_bytes.into());
         let stderr = MemoryOutputPipe::new(memory_limits.stderr_bytes.into());
@@ -91,20 +95,22 @@ impl SandboxEngine {
             .stderr(stderr.clone())
             .build();
         let mut store = Store::new(
-            &self.engine,
+            &self.engine, 
             SandboxState {
                 wasi_ctx: ctx,
                 wasi_http: WasiHttpCtx::new(),
                 resource_table: ResourceTable::default(),
-                limits: memory_limits,
-                http: http,
+                memory_limits,
+                http,
+                request_limit,
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
                 requests: Default::default(),
+                request_count: 0,
             },
         );
         store.limiter(|s| s);
-        store.set_fuel(cpu_fuel)?;
+        store.set_fuel(cpu_fuel.into())?;
         let sandbox =
             bindings::Root::instantiate_async(&mut store, &self.component, &self.linker).await?;
         Ok(SandboxInstance { store, sandbox, stdout, stderr })
@@ -115,7 +121,7 @@ impl SandboxEngine {
         parameters: &[serde_json::Value],
         config: SandboxConfig,
     ) -> SandboxEvaluationResult {
-        match self.build(config.cpu_fuel, config.memory_limits, config.http).await {
+        match self.build(config.cpu_fuel, config.memory_limits, config.http, config.request_limit).await {
             Ok(instance) => instance.evaluate(code, parameters, &EvaluateOptions { mode: config.mode, strip_typescript_types: config.strip_typescript_types }).await,
             Err(err) => SandboxEvaluationResult {
                 result: Err(EvaluateError::WasmError(err)),
@@ -302,4 +308,9 @@ impl Default for EvaluateOptions {
 pub enum EvaluateMode {
     ModuleMethod(Box<str>),
     FunctionCall,
+}
+impl Default for EvaluateMode {
+    fn default() -> Self {
+        EvaluateMode::FunctionCall
+    }
 }

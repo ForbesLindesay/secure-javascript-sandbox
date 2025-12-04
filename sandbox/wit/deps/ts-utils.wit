@@ -4,7 +4,9 @@ interface ts-utils-impl {
   record compiled-module {
     has-dynamic-import: bool,
     static-imports: list<string>,
-    code: string
+    code: string,
+    named-exports: list<string>,
+    star-exports: list<string>
   }
 
   strip-types-only: func(script: string) -> result<string, string>;

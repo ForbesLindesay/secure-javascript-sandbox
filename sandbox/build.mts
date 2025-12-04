@@ -57,8 +57,44 @@ run(
     cwd: dirname(import.meta.dirname)
   }
 );
-const utilsWasm = join(dirname(import.meta.dirname), `target/wasm32-wasip2/${releaseMode ? "release" : "debug"}/secure_js_sandbox_ts_utils_wasm.wasm`);
+
+const utilsWasmUnoptimized = join(dirname(import.meta.dirname), `target/wasm32-wasip2/${releaseMode ? "release" : "debug"}/secure_js_sandbox_ts_utils_wasm.wasm`);
+if (releaseMode) {
+  run(
+    `npx`,
+    [
+      `jco`,
+      `opt`,
+      utilsWasmUnoptimized,
+      `--output`, `tsutils.wasm`,
+      // `--asyncify`,
+    ],
+    {
+      cwd: join(import.meta.dirname, `build`),
+      cache: {
+        inputFiles: [utilsWasmUnoptimized,],
+        outputFile: join(import.meta.dirname, `build/tsutils.wasm`),
+      }
+    },
+  );
+} else {
+  writeFileSync(join(import.meta.dirname, `build/tsutils.wasm.cache`), "debug_build");
+  writeFileSync(
+    join(import.meta.dirname, `build/tsutils.wasm`),
+    readFileSync(utilsWasmUnoptimized)
+  );
+}
+const utilsWasm = join(import.meta.dirname, `build/tsutils.wasm`);
 const utilsWit = readFileSync(join(dirname(import.meta.dirname), `crates/ts_utils_wasm/wit/ts-utils.wit`));
+
+writeFileSync(
+  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils.wasm`),
+  readFileSync(utilsWasm)
+);
+writeFileSync(
+  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils.wit`),
+  utilsWit
+);
 
 mkdirSync(join(import.meta.dirname, `wit/deps`), { recursive: true });
 writeFileSync(join(import.meta.dirname, `wit/deps/ts-utils.wit`), utilsWit);

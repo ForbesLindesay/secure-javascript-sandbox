@@ -1,17 +1,16 @@
 use crate::module_visitor::{Export, IdentifierVisitor, ModuleVisitor, Replacement};
 use anyhow::{Context, Result};
-use serde::Serialize;
 use std::sync::Arc;
 use swc_common::{FileName, SourceMap, comments::SingleThreadedComments, errors::Handler};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 use swc_ecma_visit::VisitWith;
 
-#[derive(Serialize)]
 pub struct CompiledModule {
     pub has_dynamic_import: bool,
     pub static_imports: Vec<String>,
     pub code: String,
+    pub exports: Vec<Export>,
 }
 
 /// Given a string of JavaScript representing a module, convert it into
@@ -67,12 +66,6 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
             Replacement::ImportFnReference(ident) => ident.bytes().collect(),
         };
         let mut replacement_idx = 0;
-        // TODO:
-        // pub enum Replacement {
-        //     Whitespace,
-        //     ExportDefaultExpression,
-        //     ImportFnReference,
-        // }
         let (start, end) = (span.lo.0 as usize - 1, span.hi.0 as usize - 1);
 
         for (i, c) in source[start..end].char_indices() {
@@ -162,7 +155,7 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
     full_result.push_str(&result);
     full_result.push_str(";return {");
     let mut is_first_export = true;
-    for export in visitor.exports {
+    for export in visitor.exports.iter() {
         if is_first_export {
             is_first_export = false;
         } else {
@@ -172,7 +165,7 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
             Export::ExportNamed { exported, local } => {
                 full_result.push_str(&format!("{}:{}", exported, local.as_str()));
             }
-            Export::ExportAll { local } => {
+            Export::ExportAll { local, .. } => {
                 full_result.push_str(&format!("...{}", local.as_str()));
             }
         };
@@ -183,13 +176,12 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         has_dynamic_import,
         static_imports,
         code: full_result,
+        exports: visitor.exports,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use secure_js_sandbox::SandboxConfig;
-
     use super::*;
 
     #[tokio::test]
@@ -231,7 +223,7 @@ mod tests {
         let code = res.code;
         let arguments = arguments.join(",");
         let engine = secure_js_sandbox::SandboxEngine::new().unwrap();
-        engine
+        let result = engine
             .evaluate(
                 &format!(
                     r#"
@@ -247,19 +239,16 @@ mod tests {
                             _assert(result.y === 42, "y should be 42");
                             _assert(result.default() === 4, "default() should return 4");
                             _assert(result.asyncTheAnswer === 42, "default() should return 4");
+                            return 42;
                         }}
                     "#
                 ),
                 &vec![],
-                SandboxConfig {
-                    cpu_fuel: 500_000_000_000,
-                    memory_limits: Default::default(),
-                    http: secure_js_sandbox::HttpMode::BlockAll,
-                    ..Default::default()
-                }
+                Default::default()
             )
             .await
             .result
             .unwrap();
+        assert_eq!(result, serde_json::json!(42));
     }
 }
