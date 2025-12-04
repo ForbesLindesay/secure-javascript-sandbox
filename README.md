@@ -288,6 +288,7 @@ docker buildx create \
 cd sandbox && npm install && node --run build -- --release && cd .. && \
 docker buildx build \
   --tag forbeslindesay/secure-js-sandbox:latest \
+  --tag forbeslindesay/secure-js-sandbox:v{{VERSION}} \
   --platform linux/arm64,linux/amd64 \
   --builder container \
   --push .
