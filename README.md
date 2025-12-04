@@ -41,8 +41,10 @@ SANDBOX_CPU_FUEL="440_000_000"
 # How much memory (in bytes) to allow each sandboxed function
 # to use. This includes the memory for the Spidermonkey VM
 # itself. Defaults to 128MB.
+# You can set this to "UNBOUNDED" to remove this limit.
 SANDBOX_MAX_MEMORY_BYTES="128MB"
 # Set a limit on the number of "tables elements" within the WASM VM
+# You can set this to "UNBOUNDED" to remove this limit.
 SANDBOX_MAX_TABLE_ELEMENTS="100_000"
 # Set a limit on the number of "instances" within the WASM VM
 SANDBOX_MAX_INSTANCES="10_000"
@@ -63,6 +65,9 @@ SANDBOX_STDOUT_MAX_BYTES="10MB"
 SANDBOX_STDERR_MAX_BYTES="10MB"
 # Whether to allow outbound requests via the `fetch` function.
 SANDBOX_HTTP_MODE="BLOCK_ALL"
+# The maximum number of outbound HTTP requests per call to /evaluate
+# You can set this to "UNBOUNDED" to remove this limit.
+SANDBOX_REQUEST_LIMIT="1_000"
 # Enable this to automatically strip types before evaluating
 # the code passed to the "/evaluate" endpoint. This does incur
 # a small performance overhead.
