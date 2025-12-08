@@ -12,7 +12,7 @@ mod tsutils;
 pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
 
-pub use imports::{CustomImportMap, ImportMap, ResolvedModule};
+pub use imports::{CustomImportMap, ImportMap, ResolvedModule, StaticImportSource};
 pub use limit_values::{
     CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit,
 };

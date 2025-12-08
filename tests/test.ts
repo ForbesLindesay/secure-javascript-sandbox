@@ -248,20 +248,29 @@ console.log(
 //   args: []
 // }))
 
-server.close();
-
 
 await startServer({
-  SANDBOX_IMPORTS_DIRECTORY: join(import.meta.dirname, 'imports'),
+  SANDBOX_HTTP_MODE: "ALLOW_ALL",
+  SANDBOX_IMPORT_MAP_PATH: join(import.meta.dirname, 'imports', 'import-map.json'),
   SANDBOX_MODULE_METHOD: "run",
 })
 
 console.log(await run({
-  code: `import { fib } from 'fib.js';
+  code: `import { fib } from 'fib';
   export async function run(n) {
     return fib(n);
   }`,
   parameters: [10]
 }))
 
+console.log(await run({
+  code: `import { fib } from 'fib-external';
+  export async function run(n) {
+    return fib(n);
+  }`,
+  parameters: [10]
+}))
+
+
 proc.kill();
+server.close();

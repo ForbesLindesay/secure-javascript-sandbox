@@ -9,7 +9,6 @@ pub struct EvaluateRequest {
     pub parameters: Vec<serde_json::Value>,
 }
 
-
 #[derive(Deserialize)]
 pub struct SandboxServerRequestConfig {
     #[serde(default)]
@@ -38,7 +37,6 @@ impl Default for SandboxServerRequestConfig {
         }
     }
 }
-
 
 #[derive(Deserialize)]
 pub struct EvaluateRequestWithConfig {

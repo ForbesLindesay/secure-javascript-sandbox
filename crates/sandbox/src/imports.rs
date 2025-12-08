@@ -1,4 +1,10 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use hyper::Uri;
 
 pub enum ResolvedModule {
     Url(String),
@@ -12,7 +18,11 @@ pub trait CustomImportMap: Send + Sync + 'static {
 
 pub(crate) struct ImportMapBlockAll;
 impl CustomImportMap for ImportMapBlockAll {
-    fn resolve_import_path(&self, _path: String, _parent: String) -> anyhow::Result<ResolvedModule> {
+    fn resolve_import_path(
+        &self,
+        _path: String,
+        _parent: String,
+    ) -> anyhow::Result<ResolvedModule> {
         Err(anyhow::anyhow!("Importing modules is blocked"))
     }
     fn load_import(&self, _id: String) -> anyhow::Result<String> {
@@ -20,11 +30,25 @@ impl CustomImportMap for ImportMapBlockAll {
     }
 }
 
+pub enum StaticImportSource {
+    Url(Uri),
+    File(PathBuf),
+}
+impl StaticImportSource {
+    pub fn parse_string(s: String, basedir: &Path) -> anyhow::Result<Self> {
+        if s.starts_with("http://") || s.starts_with("https://") {
+            Ok(StaticImportSource::Url(s.parse()?))
+        } else {
+            Ok(StaticImportSource::File(basedir.join(s)))
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum ImportMap {
     AllowHttp,
-    AllowFolder(Arc<Path>),
     BlockAll,
+    StaticImportMap(Arc<HashMap<String, StaticImportSource>>),
 }
 impl Default for ImportMap {
     fn default() -> Self {
@@ -35,44 +59,29 @@ impl CustomImportMap for ImportMap {
     fn resolve_import_path(&self, path: String, parent: String) -> anyhow::Result<ResolvedModule> {
         match self {
             ImportMap::AllowHttp => Ok(ResolvedModule::Url(path)),
-            ImportMap::AllowFolder(folder) => {
-                if parent == "<main>" {
-                    let full_path = folder.join(&path);
-                    Ok(ResolvedModule::Id(full_path.to_string_lossy().to_string()))
-                } else {
-                    let parent_path = Path::new(&parent);
-                    let parent_dir = parent_path.parent().ok_or_else(|| anyhow::anyhow!("Parent path has no parent directory"))?;
-                    let full_path = parent_dir.join(&path);
-                    Ok(ResolvedModule::Id(full_path.to_string_lossy().to_string()))
-                }
+            ImportMap::BlockAll => ImportMapBlockAll.resolve_import_path(path, parent),
+            ImportMap::StaticImportMap(map) => match map.get(&path) {
+                Some(StaticImportSource::Url(url)) => Ok(ResolvedModule::Url(url.to_string())),
+                Some(StaticImportSource::File(_)) => Ok(ResolvedModule::Id(path)),
+                None => Err(anyhow::anyhow!(
+                    "Module {} not found in static import map",
+                    path
+                )),
             },
-            ImportMap::BlockAll => ImportMapBlockAll.resolve_import_path(path, parent)
         }
     }
     fn load_import(&self, id: String) -> anyhow::Result<String> {
         match self {
             ImportMap::AllowHttp => Err(anyhow::anyhow!("HTTP imports should be loaded via fetch")),
-            ImportMap::AllowFolder(folder) => {
-                let full_path = Path::new(&id).canonicalize()?;
-                if !is_inside(&folder, &full_path) {
-                    return Err(anyhow::anyhow!("Attempted to load import outside of allowed folder"));
+            ImportMap::BlockAll => ImportMapBlockAll.load_import(id),
+            ImportMap::StaticImportMap(map) => {
+                if let Some(StaticImportSource::File(path)) = map.get(&id) {
+                    let content = std::fs::read_to_string(path)?;
+                    Ok(content)
+                } else {
+                    Err(anyhow::anyhow!("Module not found"))
                 }
-                let content = std::fs::read_to_string(full_path)?;
-                Ok(content)
-            },
-            ImportMap::BlockAll => ImportMapBlockAll.load_import(id)
+            }
         }
     }
-}
-
-fn is_inside(parent: &Path, child: &Path) -> bool {
-    let parent = match parent.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    let child = match child.canonicalize() {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    child.starts_with(parent)
 }

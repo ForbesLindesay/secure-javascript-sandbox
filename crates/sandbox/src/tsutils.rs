@@ -88,7 +88,8 @@ impl TsUtilsEngine {
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
         let engine = Engine::new(&engine_config).unwrap();
-        let mut linker: Linker<SandboxState<ImportMapBlockAll, BlockAllHttp>> = Linker::new(&engine);
+        let mut linker: Linker<SandboxState<ImportMapBlockAll, BlockAllHttp>> =
+            Linker::new(&engine);
 
         // Wasi Provides support for accessing system APIs from the sandbox.
         // System APIs are only exposed based on the capabilities in the WasiCtx

@@ -1,30 +1,43 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
-    CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode, ImportMap, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, TableLimit
+    CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode, ImportMap, MemoryLimitBytes,
+    MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, StaticImportSource,
+    TableLimit,
 };
 
 use crate::env::get_env;
 use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
 
-pub struct EvaluateInput<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
+pub struct EvaluateInput<
+    THttpMode: CustomHttpMode = HttpMode,
+    TImportMap: CustomImportMap = ImportMap,
+> {
     pub code: String,
     pub parameters: Vec<serde_json::Value>,
     pub config: SandboxConfig<THttpMode, TImportMap>,
 }
 
-pub trait CustomSandboxServerConfig<TRequestType, THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap>: Send + Sync + 'static
-where
+pub trait CustomSandboxServerConfig<
+    TRequestType,
+    THttpMode: CustomHttpMode = HttpMode,
+    TImportMap: CustomImportMap = ImportMap,
+>: Send + Sync + 'static where
     TRequestType: DeserializeOwned + Send + 'static,
 {
     fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap>;
 }
 
-impl<TRequestType: DeserializeOwned + Send + 'static, THttpMode: CustomHttpMode, TImportMap: CustomImportMap, T: CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap>>
-    CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap> for Arc<T>
+impl<
+    TRequestType: DeserializeOwned + Send + 'static,
+    THttpMode: CustomHttpMode,
+    TImportMap: CustomImportMap,
+    T: CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap>,
+> CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap> for Arc<T>
 {
     fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap> {
         self.as_ref().get_evaluate_input(request)
@@ -101,7 +114,10 @@ impl Default for SandboxServerMemoryLimits {
     }
 }
 
-pub struct SandboxServerConfig<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap + Clone = ImportMap> {
+pub struct SandboxServerConfig<
+    THttpMode: CustomHttpMode = HttpMode,
+    TImportMap: CustomImportMap + Clone = ImportMap,
+> {
     pub cpu_fuel: CpuFuel,
     pub memory_limits: SandboxServerMemoryLimits,
     pub http: THttpMode,
@@ -125,7 +141,7 @@ impl Default for SandboxServerConfig {
     }
 }
 
-impl SandboxServerConfig{
+impl SandboxServerConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = Self::default();
         config.memory_limits.set_from_env("SANDBOX")?;
@@ -144,15 +160,16 @@ impl SandboxServerConfig{
         if let Some(module_method) = get_env::<String>("SANDBOX_MODULE_METHOD")? {
             config.module_method = Some(module_method.into_boxed_str());
         }
-        if let Some(imports_directory) = get_env::<PathBuf>("SANDBOX_IMPORTS_DIRECTORY")? {
-            config.import_map = ImportMap::AllowFolder(imports_directory.into_boxed_path().into());
-        }
+        config.import_map = import_map_from_env()?;
 
         Ok(config)
     }
 }
 
-impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone> CustomSandboxServerConfig<EvaluateRequest, THttpMode, TImportMap> for SandboxServerConfig<THttpMode, TImportMap> {
+impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
+    CustomSandboxServerConfig<EvaluateRequest, THttpMode, TImportMap>
+    for SandboxServerConfig<THttpMode, TImportMap>
+{
     fn get_evaluate_input(&self, request: EvaluateRequest) -> EvaluateInput<THttpMode, TImportMap> {
         EvaluateInput {
             code: request.code,
@@ -187,15 +204,18 @@ impl Default for AllowRequestToConfigureSandbox {
 impl AllowRequestToConfigureSandbox {
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = Self::default();
-        if let Some(imports_directory) = get_env::<PathBuf>("SANDBOX_IMPORTS_DIRECTORY")? {
-            config.import_map = ImportMap::AllowFolder(imports_directory.into_boxed_path().into());
-        }
-
+        config.import_map = import_map_from_env()?;
         Ok(config)
     }
 }
-impl<TImportMap: CustomImportMap + Clone> CustomSandboxServerConfig<EvaluateRequestWithConfig, HttpMode, TImportMap> for AllowRequestToConfigureSandbox<TImportMap>{
-    fn get_evaluate_input(&self, request: EvaluateRequestWithConfig) -> EvaluateInput<HttpMode, TImportMap> {
+impl<TImportMap: CustomImportMap + Clone>
+    CustomSandboxServerConfig<EvaluateRequestWithConfig, HttpMode, TImportMap>
+    for AllowRequestToConfigureSandbox<TImportMap>
+{
+    fn get_evaluate_input(
+        &self,
+        request: EvaluateRequestWithConfig,
+    ) -> EvaluateInput<HttpMode, TImportMap> {
         EvaluateInput {
             code: request.code,
             parameters: request.parameters,
@@ -212,5 +232,38 @@ impl<TImportMap: CustomImportMap + Clone> CustomSandboxServerConfig<EvaluateRequ
                 strip_typescript_types: request.config.sandbox_auto_strip_types,
             },
         }
+    }
+}
+
+fn import_map_from_env() -> anyhow::Result<ImportMap> {
+    if let Some(import_map_path) = get_env::<PathBuf>("SANDBOX_IMPORT_MAP_PATH")? {
+        let import_map_path = import_map_path.canonicalize()?;
+        let parent_dir = import_map_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Parent path has no parent directory"))?;
+        let import_map_content = std::fs::read_to_string(&import_map_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read import map file {}: {}",
+                import_map_path.display(),
+                e
+            )
+        })?;
+        let import_map: HashMap<String, String> = serde_json::from_str(&import_map_content)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse import map file {}: {}",
+                    import_map_path.display(),
+                    e
+                )
+            })?;
+        let import_map: HashMap<String, StaticImportSource> = import_map
+            .into_iter()
+            .map(|(key, path)| {
+                StaticImportSource::parse_string(path, parent_dir).map(|path| (key, path))
+            })
+            .collect::<anyhow::Result<HashMap<String, StaticImportSource>>>()?;
+        Ok(ImportMap::StaticImportMap(Arc::new(import_map)))
+    } else {
+        Ok(ImportMap::default())
     }
 }

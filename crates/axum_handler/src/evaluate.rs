@@ -6,7 +6,7 @@ use secure_js_sandbox::SandboxEngine;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
-use crate::{EvaluateResponse, CustomSandboxServerConfig, server_config::EvaluateInput};
+use crate::{CustomSandboxServerConfig, EvaluateResponse, server_config::EvaluateInput};
 
 pub async fn create_evaluate_handler<
     TRequest: DeserializeOwned + Send + 'static,

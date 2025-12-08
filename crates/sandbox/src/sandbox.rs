@@ -6,7 +6,9 @@ use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
 use crate::state::SandboxState;
-use crate::{CpuFuel, CustomHttpMode, CustomImportMap, HttpMode, ImportMap, MemoryLimits, RequestLimit};
+use crate::{
+    CpuFuel, CustomHttpMode, CustomImportMap, HttpMode, ImportMap, MemoryLimits, RequestLimit,
+};
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -24,7 +26,10 @@ pub(crate) use bindings::local::host::host_impl::Host;
 pub use bindings::local::host::host_impl::ResolvedModule;
 
 #[derive(Clone)]
-pub struct SandboxConfig<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
+pub struct SandboxConfig<
+    THttpMode: CustomHttpMode = HttpMode,
+    TImportMap: CustomImportMap = ImportMap,
+> {
     /// Limit of CPU instructions that can be executed in this sandbox.
     pub cpu_fuel: CpuFuel,
     /// Limit the memory that can be allocated by the sandbox.
@@ -53,7 +58,10 @@ impl Default for SandboxConfig {
     }
 }
 
-pub struct SandboxEngine<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
+pub struct SandboxEngine<
+    THttpMode: CustomHttpMode = HttpMode,
+    TImportMap: CustomImportMap = ImportMap,
+> {
     engine: Engine,
     component: Component,
     linker: Linker<SandboxState<TImportMap, THttpMode>>,
@@ -78,10 +86,10 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         // to work from within JavaScript.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
-        bindings::local::host::host_impl::add_to_linker::<SandboxState<TImportMap, THttpMode>, SandboxState<TImportMap, THttpMode>>(
-            &mut linker,
-            |s| s,
-        )?;
+        bindings::local::host::host_impl::add_to_linker::<
+            SandboxState<TImportMap, THttpMode>,
+            SandboxState<TImportMap, THttpMode>,
+        >(&mut linker, |s| s)?;
 
         let component: Component =
             unsafe { Component::deserialize(&engine, include_bytes!("sandbox/sandbox.bin"))? };
@@ -215,7 +223,9 @@ struct SandboxInstance<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> {
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
 }
-impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxInstance<THttpMode, TImportMap> {
+impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
+    SandboxInstance<THttpMode, TImportMap>
+{
     fn handle_result(self, result: Result<(), anyhow::Error>) -> SandboxEvaluationResult {
         let full_stdout = take_memory_pipe_contents(self.stdout);
         let full_stderr = take_memory_pipe_contents(self.stderr);

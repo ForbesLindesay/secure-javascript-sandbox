@@ -8,7 +8,8 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 use crate::http::{Requests, send_request_handler};
 use crate::memory::MemoryLimits;
 use crate::{
-    CustomHttpMode, CustomImportMap, MemoryLimitBytes, RequestLimit, RequestValidationOutcome, ResolvedModule, TableLimit
+    CustomHttpMode, CustomImportMap, MemoryLimitBytes, RequestLimit, RequestValidationOutcome,
+    ResolvedModule, TableLimit,
 };
 
 pub(crate) struct SandboxState<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> {
@@ -25,7 +26,9 @@ pub(crate) struct SandboxState<TImportMap: CustomImportMap, THttpMode: CustomHtt
     pub request_count: usize,
 }
 
-impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiView for SandboxState<TImportMap, THttpMode> {
+impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiView
+    for SandboxState<TImportMap, THttpMode>
+{
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView {
             ctx: &mut self.wasi_ctx,
@@ -34,7 +37,9 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiView for Sandbo
     }
 }
 
-impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiHttpView for SandboxState<TImportMap, THttpMode> {
+impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiHttpView
+    for SandboxState<TImportMap, THttpMode>
+{
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.wasi_http
     }
@@ -69,7 +74,9 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiHttpView for Sa
     }
 }
 
-impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter for SandboxState<TImportMap, THttpMode> {
+impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
+    for SandboxState<TImportMap, THttpMode>
+{
     fn memory_growing(
         &mut self,
         _current: usize,
@@ -149,34 +156,38 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter for
     }
 }
 
-impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> HasData for SandboxState<TImportMap, THttpMode> {
+impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> HasData
+    for SandboxState<TImportMap, THttpMode>
+{
     type Data<'a> = &'a mut Self;
 }
-impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> crate::sandbox::Host for SandboxState<TImportMap, THttpMode> {
-    async fn resolve_import_path(&mut self, path: String, parent: String) -> Result<crate::sandbox::ResolvedModule, String> {
-        println!("Resolving import path: {} from parent: {}", path, parent);
-        let resolved = self.imports
+impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> crate::sandbox::Host
+    for SandboxState<TImportMap, THttpMode>
+{
+    async fn resolve_import_path(
+        &mut self,
+        path: String,
+        parent: String,
+    ) -> Result<crate::sandbox::ResolvedModule, String> {
+        let resolved = self
+            .imports
             .resolve_import_path(path, parent)
             .map_err(|e| e.to_string())?;
-        Ok(
-            match resolved {
-                ResolvedModule::Url(url) => crate::sandbox::ResolvedModule::Url(url),
-                ResolvedModule::Id(id) => crate::sandbox::ResolvedModule::Id(id),
-            }
-        )
+        Ok(match resolved {
+            ResolvedModule::Url(url) => crate::sandbox::ResolvedModule::Url(url),
+            ResolvedModule::Id(id) => crate::sandbox::ResolvedModule::Id(id),
+        })
     }
     async fn load_import(&mut self, id: String) -> Result<String, String> {
-        println!("Loading import source for id: {}", id);
         self.imports.load_import(id).map_err(|e| e.to_string())
     }
 }
 
-
-            // {
-            //     let request = hyper::Request::builder()
-            //         .method(hyper::Method::GET)
-            //         .uri(&id)
-            //         .body(String::new())
-            //         .map_err(|e| anyhow::anyhow!("Failed to build request for {}: {}", id, e))?;
-            //     let result = crate::http::send_request_handler(request, Default::default(), http_mode);
-            // }
+// {
+//     let request = hyper::Request::builder()
+//         .method(hyper::Method::GET)
+//         .uri(&id)
+//         .body(String::new())
+//         .map_err(|e| anyhow::anyhow!("Failed to build request for {}: {}", id, e))?;
+//     let result = crate::http::send_request_handler(request, Default::default(), http_mode);
+// }
