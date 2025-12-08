@@ -4,9 +4,9 @@ use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::types::HostFutureIncomingResponse;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-use crate::{MemoryLimitBytes, RequestLimit, RequestValidationOutcome, TableLimit};
 use crate::http::{HttpMode, Requests, send_request_handler};
-use crate::memory::{MemoryLimits};
+use crate::memory::MemoryLimits;
+use crate::{MemoryLimitBytes, RequestLimit, RequestValidationOutcome, TableLimit};
 
 pub(crate) struct SandboxState {
     pub wasi_ctx: WasiCtx,
@@ -45,8 +45,14 @@ impl WasiHttpView for SandboxState {
         self.request_count = self.request_count.saturating_add(1);
         if let RequestLimit::Limited(max) = self.request_limit {
             if self.request_count > max {
-                self.requests.push((request.uri().clone(), None, RequestValidationOutcome::Blocked));
-                return Ok(HostFutureIncomingResponse::ready(Ok(Err(ErrorCode::ConnectionLimitReached))));
+                self.requests.push((
+                    request.uri().clone(),
+                    None,
+                    RequestValidationOutcome::Blocked,
+                ));
+                return Ok(HostFutureIncomingResponse::ready(Ok(Err(
+                    ErrorCode::ConnectionLimitReached,
+                ))));
             }
         }
         let http_mode = self.http.clone();

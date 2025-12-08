@@ -3,7 +3,8 @@ use std::sync::Arc;
 use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
-    CpuFuel, EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, TableLimit
+    CpuFuel, EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit,
+    ResourceLimit, SandboxConfig, TableLimit,
 };
 
 use crate::env::get_env;
@@ -46,7 +47,7 @@ pub struct SandboxServerMemoryLimits {
     pub tables: ResourceLimit,
     #[serde(default)]
     pub memories: ResourceLimit,
-    #[serde(default="default_trap_on_grow_failure")]
+    #[serde(default = "default_trap_on_grow_failure")]
     pub trap_on_grow_failure: bool,
     #[serde(default)]
     pub stdout_max_bytes: MemorySizeBytes,
@@ -58,7 +59,7 @@ macro_rules! set_from_env {
         if let Some(value) = get_env(&format!("{}_{}", $prefix, $env_var))? {
             $self.$field = value;
         }
-    }
+    };
 }
 impl SandboxServerMemoryLimits {
     pub fn to_memory_limits(&self) -> MemoryLimits {
@@ -175,10 +176,7 @@ impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
 
 pub struct AllowRequestToConfigureSandbox;
 impl SandboxServerConfigTrait<EvaluateRequestWithConfig> for AllowRequestToConfigureSandbox {
-    fn get_evaluate_input(
-        &self,
-        request: EvaluateRequestWithConfig,
-    ) -> EvaluateInput {
+    fn get_evaluate_input(&self, request: EvaluateRequestWithConfig) -> EvaluateInput {
         EvaluateInput {
             code: request.code,
             parameters: request.parameters,

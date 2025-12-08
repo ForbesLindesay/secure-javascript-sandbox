@@ -1,5 +1,5 @@
-use std::str::FromStr;
 use serde::{Deserialize, de::Visitor};
+use std::str::FromStr;
 
 enum Multiple {
     Killo,
@@ -134,10 +134,12 @@ impl Number for u64 {
 }
 
 fn add_digit<TNumber: Number>(value: TNumber::Value, digit: char) -> Result<TNumber::Value, ()> {
-    digit.to_digit(10).and_then(|digit| {
-        TNumber::checked_mul(value, 10)
-            .and_then(|r| TNumber::checked_add_digit(r, digit))
-    }).ok_or(())
+    digit
+        .to_digit(10)
+        .and_then(|digit| {
+            TNumber::checked_mul(value, 10).and_then(|r| TNumber::checked_add_digit(r, digit))
+        })
+        .ok_or(())
 }
 fn parse_number<TSuffix: ValueSuffix, TResult: Number>(value: &str) -> Result<TResult::Value, ()> {
     let mut suffix = TSuffix::default();
@@ -196,12 +198,30 @@ fn test_parse_number_without_suffix<TSuffix: ValueSuffix, T: Number>() {
     assert_eq!(parse_number::<TSuffix, T>("0"), T::from_usize(0));
     assert_eq!(parse_number::<TSuffix, T>("1"), T::from_usize(1));
     assert_eq!(parse_number::<TSuffix, T>("12,345"), T::from_usize(12_345));
-    assert_eq!(parse_number::<TSuffix, T>("1_000_000"), T::from_usize(1_000_000));
-    assert!(parse_number::<TSuffix, T>("").is_err(), "expected error parsing empty string");
-    assert!(parse_number::<TSuffix, T>(",100").is_err(), "expected error parsing string starting with separator");
-    assert!(parse_number::<TSuffix, T>("100,").is_err(), "expected error parsing string ending with separator");
-    assert!(parse_number::<TSuffix, T>("01").is_err(), "expected error parsing string with leading 0");
-    assert!(parse_number::<TSuffix, T>("1 ").is_err(), "expected error parsing string with trailing space");
+    assert_eq!(
+        parse_number::<TSuffix, T>("1_000_000"),
+        T::from_usize(1_000_000)
+    );
+    assert!(
+        parse_number::<TSuffix, T>("").is_err(),
+        "expected error parsing empty string"
+    );
+    assert!(
+        parse_number::<TSuffix, T>(",100").is_err(),
+        "expected error parsing string starting with separator"
+    );
+    assert!(
+        parse_number::<TSuffix, T>("100,").is_err(),
+        "expected error parsing string ending with separator"
+    );
+    assert!(
+        parse_number::<TSuffix, T>("01").is_err(),
+        "expected error parsing string with leading 0"
+    );
+    assert!(
+        parse_number::<TSuffix, T>("1 ").is_err(),
+        "expected error parsing string with trailing space"
+    );
 }
 #[cfg(test)]
 fn test_parse_number_t<T: Number>() {
@@ -213,10 +233,22 @@ fn test_parse_number_t<T: Number>() {
     assert_eq!(parse_number::<MemorySuffix, T>("1B"), T::from_usize(1));
     assert_eq!(parse_number::<MemorySuffix, T>("1KB"), T::from_usize(1024));
     assert_eq!(parse_number::<MemorySuffix, T>("1 KB"), T::from_usize(1024));
-    assert_eq!(parse_number::<MemorySuffix, T>("1,000 KB"), T::from_usize(1024_000));
-    assert!(parse_number::<MemorySuffix, T>("1 K").is_err(), "expected error parsing string with incomplete suffix");
-    assert!(parse_number::<MemorySuffix, T>("1 KB ").is_err(), "expected error parsing string with space after suffix");
-    assert!(parse_number::<MemorySuffix, T>("1 KB,").is_err(), "expected error parsing string with separator after suffix");
+    assert_eq!(
+        parse_number::<MemorySuffix, T>("1,000 KB"),
+        T::from_usize(1024_000)
+    );
+    assert!(
+        parse_number::<MemorySuffix, T>("1 K").is_err(),
+        "expected error parsing string with incomplete suffix"
+    );
+    assert!(
+        parse_number::<MemorySuffix, T>("1 KB ").is_err(),
+        "expected error parsing string with space after suffix"
+    );
+    assert!(
+        parse_number::<MemorySuffix, T>("1 KB,").is_err(),
+        "expected error parsing string with separator after suffix"
+    );
 }
 
 #[test]
@@ -270,7 +302,10 @@ macro_rules! number_type {
                         E: serde::de::Error,
                     {
                         if value < $min_value {
-                            return Err(E::custom(format!("{} must be at least {}", $name, $min_value)));
+                            return Err(E::custom(format!(
+                                "{} must be at least {}",
+                                $name, $min_value
+                            )));
                         }
                         Ok($id(value as $underlying))
                     }
@@ -279,7 +314,10 @@ macro_rules! number_type {
                         E: serde::de::Error,
                     {
                         if value < $min_value {
-                            return Err(E::custom(format!("{} must be at least {}", $name, $min_value)));
+                            return Err(E::custom(format!(
+                                "{} must be at least {}",
+                                $name, $min_value
+                            )));
                         }
                         Ok($id(value as $underlying))
                     }
@@ -287,15 +325,14 @@ macro_rules! number_type {
                     where
                         E: serde::de::Error,
                     {
-                        value.parse().map_err(|_| {
-                            E::custom(format!("expected {}", $expected))
-                        })
+                        value
+                            .parse()
+                            .map_err(|_| E::custom(format!("expected {}", $expected)))
                     }
                 }
                 deserializer.deserialize_any(SelfVisitor)
             }
         }
-
     };
 }
 
@@ -364,7 +401,10 @@ macro_rules! optional_bound {
                         E: serde::de::Error,
                     {
                         if value < $min_value {
-                            return Err(E::custom(format!("{} must be at least {}", $name, $min_value)));
+                            return Err(E::custom(format!(
+                                "{} must be at least {}",
+                                $name, $min_value
+                            )));
                         }
                         Ok($id::Limited(value as $underlying))
                     }
@@ -373,7 +413,10 @@ macro_rules! optional_bound {
                         E: serde::de::Error,
                     {
                         if value < $min_value {
-                            return Err(E::custom(format!("{} must be at least {}", $name, $min_value)));
+                            return Err(E::custom(format!(
+                                "{} must be at least {}",
+                                $name, $min_value
+                            )));
                         }
                         Ok($id::Limited(value as $underlying))
                     }
@@ -381,25 +424,72 @@ macro_rules! optional_bound {
                     where
                         E: serde::de::Error,
                     {
-                        value.parse().map_err(|_| {
-                            E::custom(format!("expected {}", $expected))
-                        })
+                        value
+                            .parse()
+                            .map_err(|_| E::custom(format!("expected {}", $expected)))
                     }
                 }
                 deserializer.deserialize_any(SelfVisitor)
             }
         }
-
     };
 }
 
-number_type!(MemorySizeBytes, usize, MemorySuffix, name="Memory Size", expect="an integer or string like '128MB'", default=10 * 1024 * 1024, min=1);
-number_type!(ResourceLimit, usize, NoSuffix, name="Resource Limit", expect="a positive integer", default=10_000, min=1);
-number_type!(CpuFuel, u64, NoSuffix, name="CPU Fuel", expect="a positive integer", default=440_000_000, min=1);
+number_type!(
+    MemorySizeBytes,
+    usize,
+    MemorySuffix,
+    name = "Memory Size",
+    expect = "an integer or string like '128MB'",
+    default = 10 * 1024 * 1024,
+    min = 1
+);
+number_type!(
+    ResourceLimit,
+    usize,
+    NoSuffix,
+    name = "Resource Limit",
+    expect = "a positive integer",
+    default = 10_000,
+    min = 1
+);
+number_type!(
+    CpuFuel,
+    u64,
+    NoSuffix,
+    name = "CPU Fuel",
+    expect = "a positive integer",
+    default = 440_000_000,
+    min = 1
+);
 
-optional_bound!(MemoryLimitBytes, usize, MemorySuffix, name="Memory Limit Bytes", expect="a positive integer or the string 'UNBOUNDED' or a string like '128MB'", default=128 * 1024 * 1024, min=1);
-optional_bound!(TableLimit, usize, NoSuffix, name="Table Limit", expect="a positive integer or the string 'UNBOUNDED'", default=100_000, min=1);
-optional_bound!(RequestLimit, usize, NoSuffix, name="Request Limit", expect="a positive integer or the string 'UNBOUNDED'", default=1_000, min=0);
+optional_bound!(
+    MemoryLimitBytes,
+    usize,
+    MemorySuffix,
+    name = "Memory Limit Bytes",
+    expect = "a positive integer or the string 'UNBOUNDED' or a string like '128MB'",
+    default = 128 * 1024 * 1024,
+    min = 1
+);
+optional_bound!(
+    TableLimit,
+    usize,
+    NoSuffix,
+    name = "Table Limit",
+    expect = "a positive integer or the string 'UNBOUNDED'",
+    default = 100_000,
+    min = 1
+);
+optional_bound!(
+    RequestLimit,
+    usize,
+    NoSuffix,
+    name = "Request Limit",
+    expect = "a positive integer or the string 'UNBOUNDED'",
+    default = 1_000,
+    min = 0
+);
 
 #[test]
 fn test_memory_size_bytes_deserialize() {
@@ -409,8 +499,8 @@ fn test_memory_size_bytes_deserialize() {
     let limited: MemoryLimitBytes =
         serde_json::from_str("1048576").expect("failed to deserialize limited memory size");
     assert_eq!(limited, MemoryLimitBytes::Limited(1048576));
-    let unbounded: MemoryLimitBytes = serde_json::from_str("\"UNBOUNDED\"")
-        .expect("failed to deserialize unbounded memory size");
+    let unbounded: MemoryLimitBytes =
+        serde_json::from_str("\"UNBOUNDED\"").expect("failed to deserialize unbounded memory size");
     assert_eq!(unbounded, MemoryLimitBytes::Unbounded);
 
     let unbounded: MemoryLimitBytes = "UNBOUNDED"
@@ -426,8 +516,20 @@ fn test_memory_size_bytes_deserialize() {
     let limited: MemoryLimitBytes = "1024".parse().expect("failed to parse limited memory size");
     assert_eq!(limited, MemoryLimitBytes::Limited(1024));
 
-    assert_eq!("UNBOUNDED".parse::<MemoryLimitBytes>().unwrap(), MemoryLimitBytes::Unbounded);
-    assert_eq!("1".parse::<MemoryLimitBytes>().unwrap(), MemoryLimitBytes::Limited(1));
-    assert_eq!("1KB".parse::<MemoryLimitBytes>().unwrap(), MemoryLimitBytes::Limited(1024));
-    assert_eq!("1,000".parse::<MemoryLimitBytes>().unwrap(), MemoryLimitBytes::Limited(1000));
+    assert_eq!(
+        "UNBOUNDED".parse::<MemoryLimitBytes>().unwrap(),
+        MemoryLimitBytes::Unbounded
+    );
+    assert_eq!(
+        "1".parse::<MemoryLimitBytes>().unwrap(),
+        MemoryLimitBytes::Limited(1)
+    );
+    assert_eq!(
+        "1KB".parse::<MemoryLimitBytes>().unwrap(),
+        MemoryLimitBytes::Limited(1024)
+    );
+    assert_eq!(
+        "1,000".parse::<MemoryLimitBytes>().unwrap(),
+        MemoryLimitBytes::Limited(1000)
+    );
 }

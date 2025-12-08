@@ -9,7 +9,7 @@ use swc_ts_fast_strip::{Mode, Options, operate};
 /// The annotations are replaced with whitespace to preserve
 /// alignment with the original source code without the need
 /// for source maps.
-pub fn strip_types_only(input: String) -> Result<String> {
+pub fn strip_types(input: String) -> Result<String> {
     let cm = Arc::<SourceMap>::default();
     let handler = Handler::with_emitter_writer(Box::new(std::io::stderr()), Some(cm.clone()));
     let options = Options {
@@ -31,7 +31,7 @@ mod tests {
     #[test]
     fn test_strip_types_only() {
         let src = "const x: number = 10;";
-        let res = strip_types_only(src.to_string()).unwrap();
+        let res = strip_types(src.to_string()).unwrap();
         println!("Result: {}", res);
         assert!(res.contains("const x         = 10"));
     }

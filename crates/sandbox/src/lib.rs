@@ -10,12 +10,16 @@ mod tsutils;
 
 pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
-pub use limit_values::{CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit};
-pub use memory::MemoryLimits;
-pub use sandbox::{
-    EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine,
+pub use limit_values::{
+    CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit,
 };
-pub use tsutils::{TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig, TsUtilsSandboxInstance, ValidateModuleMode};
+pub use memory::MemoryLimits;
+pub use sandbox::{EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine};
+pub use tsutils::{
+    TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig, TsUtilsSandboxInstance,
+    ValidateModuleMode,
+    StaticImport, StaticImportUsage, ModuleExport
+};
 pub use wasmtime::{StoreLimits, StoreLimitsBuilder};
 pub use wasmtime_wasi::WasiCtx;
 pub use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
@@ -66,7 +70,8 @@ mod tests {
                 },
             )
             .await
-            .result.unwrap();
+            .result
+            .unwrap();
         assert_eq!(result, json!(42));
     }
 
@@ -83,7 +88,8 @@ mod tests {
                 },
             )
             .await
-            .result.unwrap();
+            .result
+            .unwrap();
         assert_eq!(result, json!(42));
     }
 
@@ -118,12 +124,14 @@ mod tests {
         let code = "import * as ft from 'https://unpkg.com/funtypes@5.1.2/lib/index.mjs'; export function run(input: string): number { const result = ft.Array(ft.String).safeParse(JSON.parse(input)); return result.success ? result : { success: false, reason: ft.showError(result) };}";
         let result = engine
             .evaluate(code, &vec![json!("[\"a\", \"b\", \"c\"]")], config.clone())
-            .await.result
+            .await
+            .result
             .unwrap();
         assert_eq!(result, json!({ "success": true, "value": ["a", "b", "c"] }));
         let result = engine
             .evaluate(code, &vec![json!("[\"a\", 42, \"c\"]")], config)
-            .await.result
+            .await
+            .result
             .unwrap();
         assert_eq!(
             result,

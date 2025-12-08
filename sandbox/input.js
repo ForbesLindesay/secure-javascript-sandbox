@@ -1,4 +1,4 @@
-import { stripTypesOnly, stripTypesAndCompileModule, compileModuleOnly } from "local:ts-utils/ts-utils-impl";
+import { stripTypes, stripTypesAndCompileModule, compileModule } from "local:ts-utils/ts-utils-impl";
 
 async function output(fn) {
   try {
@@ -23,20 +23,21 @@ export async function evaluateModule(code, method, args, stripTypes) {
       if (!moduleResponse.ok) {
         throw new Error(`Failed to load module: ${moduleName} (${moduleResponse.status} ${moduleResponse.statusText}): ${await moduleResponse.text()}`)
       }
-      return await evaluateCompiledModule(compileModuleOnly(await moduleResponse.text()), moduleName)
+      return await evaluateCompiledModule(compileModule(await moduleResponse.text()), moduleName)
     })
     moduleCache.set(moduleName, modulePromise)
     return modulePromise
   }
 
   async function evaluateCompiledModule(compiled, moduleName) {
+    console.log(JSON.stringify(compiled))
     let fn
     try {
       fn = new Function(`return (${compiled.code})`)()
     } catch {
       throw new Error(`Syntax error in module: ${moduleName}`)
     }
-    const dependencies = await Promise.all(compiled.staticImports.map(moduleName => $import(moduleName)))
+    const dependencies = await Promise.all(compiled.staticImports.map(({source}) => $import(source)))
     if (compiled.hasDynamicImport) {
       dependencies.unshift($import)
     }
@@ -44,7 +45,7 @@ export async function evaluateModule(code, method, args, stripTypes) {
   }
 
   await output(async () => {
-    const compiled = await stripTypes ? stripTypesAndCompileModule(code) : compileModuleOnly(code);
+    const compiled = await stripTypes ? stripTypesAndCompileModule(code) : compileModule(code);
     const module = await evaluateCompiledModule(compiled, '<main>');
     const fn = module[method];
     return await fn(...args.map(arg => JSON.parse(arg)))
@@ -53,7 +54,7 @@ export async function evaluateModule(code, method, args, stripTypes) {
 
 export async function evaluate(code, args, stripTypes) {
   await output(async () => {
-    const compiled = await stripTypes ? stripTypesOnly(`(${code})`) : `(${code})`;
+    const compiled = await stripTypes ? stripTypes(`(${code})`) : `(${code})`;
     let fn
     try {
       fn = new Function(`return ${compiled}`)()

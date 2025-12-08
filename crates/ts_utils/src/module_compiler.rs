@@ -1,17 +1,10 @@
-use crate::module_visitor::{Export, IdentifierVisitor, ModuleVisitor, Replacement};
+use crate::{implementation::{CompiledModule, ModuleExport, StaticImport, StaticImportUsage}, module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement}};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use swc_common::{FileName, SourceMap, comments::SingleThreadedComments, errors::Handler};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 use swc_ecma_visit::VisitWith;
-
-pub struct CompiledModule {
-    pub has_dynamic_import: bool,
-    pub static_imports: Vec<String>,
-    pub code: String,
-    pub exports: Vec<Export>,
-}
 
 /// Given a string of JavaScript representing a module, convert it into
 /// an async JavaScript function.
@@ -131,7 +124,7 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
     let result = unsafe { String::from_utf8_unchecked(code) };
 
     let has_dynamic_import = visitor.import_fn_identifier.is_some();
-    let mut static_imports: Vec<String> = Vec::new();
+    let mut static_imports: Vec<StaticImport> = Vec::new();
     let mut full_result = String::new();
     full_result.push_str("async (");
     let mut is_first_import = true;
@@ -149,7 +142,22 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         let Some(src) = import.source.value.as_str() else {
             return Err(anyhow::anyhow!("import source is not a string"));
         };
-        static_imports.push(src.to_string());
+        static_imports.push(StaticImport {
+            source: src.to_string(),
+            usage: match import.pattern {
+                ModuleInputPattern::Ident(_) => {
+                    StaticImportUsage::Star
+                }
+                ModuleInputPattern::ObjectPat(items) => {
+                    StaticImportUsage::Named(
+                        items
+                            .into_iter()
+                            .map(|item| format!("{}", item.0))
+                            .collect(),
+                    )
+                }
+            },
+        });
     }
     full_result.push_str(")=>{");
     full_result.push_str(&result);
@@ -176,7 +184,21 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         has_dynamic_import,
         static_imports,
         code: full_result,
-        exports: visitor.exports,
+        exports: visitor
+            .exports
+            .into_iter()
+            .map(|export| match export {
+                Export::ExportNamed { exported, .. } => {
+                    ModuleExport::Named(exported.to_string())
+                }
+                Export::ExportAll { source, .. } => {
+                    let Some(src) = source.value.as_str() else {
+                        panic!("import source is not a string");
+                    };
+                    ModuleExport::Star(src.to_string())
+                }
+            })
+            .collect(),
     })
 }
 
@@ -217,7 +239,7 @@ mod tests {
             );
         }
         for import in res.static_imports {
-            assert_eq!(import, "the-answer");
+            assert_eq!(import.source, "the-answer");
             arguments.push(r#"{ default: 42 }"#.to_string());
         }
         let code = res.code;
@@ -244,7 +266,7 @@ mod tests {
                     "#
                 ),
                 &vec![],
-                Default::default()
+                Default::default(),
             )
             .await
             .result

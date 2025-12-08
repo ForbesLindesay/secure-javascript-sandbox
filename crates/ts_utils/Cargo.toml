@@ -3,6 +3,9 @@ name = "secure_js_sandbox_ts_utils"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 anyhow = "1.0.100"
 bytes-str = "0.2.7"
@@ -14,6 +17,7 @@ swc_ecma_parser = "27.0.6"
 swc_ecma_transforms_base = "30.0.0"
 swc_ecma_visit = "18.0.1"
 swc_ts_fast_strip = "36.0.0"
+wit-bindgen = "0.48.1"
 
 [dev-dependencies]
 secure_js_sandbox = { version = "0.1.0" }

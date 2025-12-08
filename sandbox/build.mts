@@ -42,7 +42,7 @@ function run(name: string, args: string[], { cwd, cache }: { cwd: string; cache?
 
 const releaseMode = process.argv.includes("--release");
 
-console.log(`Compiling ts_utils_wasm`);
+console.log(`Compiling ts_utils to WASM`);
 run(
   "cargo",
   [
@@ -50,7 +50,7 @@ run(
     "--target",
     "wasm32-wasip2",
     "--package",
-    "secure_js_sandbox_ts_utils_wasm",
+    "secure_js_sandbox_ts_utils",
     ...(releaseMode ? ["--release"] : []),
   ],
   {
@@ -58,7 +58,7 @@ run(
   }
 );
 
-const utilsWasmUnoptimized = join(dirname(import.meta.dirname), `target/wasm32-wasip2/${releaseMode ? "release" : "debug"}/secure_js_sandbox_ts_utils_wasm.wasm`);
+const utilsWasmUnoptimized = join(dirname(import.meta.dirname), `target/wasm32-wasip2/${releaseMode ? "release" : "debug"}/secure_js_sandbox_ts_utils.wasm`);
 if (releaseMode) {
   run(
     `npx`,
@@ -85,7 +85,7 @@ if (releaseMode) {
   );
 }
 const utilsWasm = join(import.meta.dirname, `build/tsutils.wasm`);
-const utilsWit = readFileSync(join(dirname(import.meta.dirname), `crates/ts_utils_wasm/wit/ts-utils.wit`));
+const utilsWit = readFileSync(join(dirname(import.meta.dirname), `crates/ts_utils/wit/ts-utils.wit`));
 
 writeFileSync(
   join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils.wasm`),

@@ -292,7 +292,10 @@ impl Visit for ModuleVisitor {
             source: *node.src.clone(),
             pattern: ModuleInputPattern::Ident(ident.clone()),
         });
-        self.exports.push(Export::ExportAll { local: ident, source: *node.src.clone() });
+        self.exports.push(Export::ExportAll {
+            local: ident,
+            source: *node.src.clone(),
+        });
     }
     fn visit_named_export(&mut self, node: &NamedExport) {
         self.replacements

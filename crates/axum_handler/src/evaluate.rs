@@ -6,10 +6,7 @@ use secure_js_sandbox::SandboxEngine;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
-use crate::{
-    EvaluateResponse, SandboxServerConfigTrait,
-    server_config::EvaluateInput,
-};
+use crate::{EvaluateResponse, SandboxServerConfigTrait, server_config::EvaluateInput};
 
 pub async fn create_evaluate_handler<
     TRequest: DeserializeOwned + Send + 'static,
@@ -54,7 +51,9 @@ pub async fn evaluate<
         fuel_remaining: result.fuel_remaining,
         max_requested_memory_bytes: result.max_requested_memory_bytes.unwrap_or(0),
         max_requested_table_elements: result.max_requested_table_elements.unwrap_or(0),
-        outbound_requests: result.outbound_requests.into_iter()
+        outbound_requests: result
+            .outbound_requests
+            .into_iter()
             .map(Into::into)
             .collect(),
         result: match result.result {

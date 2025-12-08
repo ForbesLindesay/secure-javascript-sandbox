@@ -1,5 +1,5 @@
-use std::fmt;
 use serde::Deserialize;
+use std::fmt;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
@@ -16,6 +16,7 @@ mod bindings {
         }
     });
 }
+pub use bindings::exports::local::ts_utils::ts_utils_impl::{StaticImport, StaticImportUsage, ModuleExport};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValidateModuleMode {
@@ -46,9 +47,8 @@ impl<'a> Deserialize<'a> for ValidateModuleMode {
 
 pub struct ValidateModuleResult {
     pub has_dynamic_import: bool,
-    pub static_imports: Vec<String>,
-    pub named_exports: Vec<String>,
-    pub star_exports: Vec<String>,
+    pub static_imports: Vec<StaticImport>,
+    pub exports: Vec<ModuleExport>,
 }
 
 #[derive(Clone)]
@@ -56,7 +56,7 @@ pub struct TsUtilsSandboxConfig {
     /// Limit of CPU instructions that can be executed in this sandbox.
     pub cpu_fuel: CpuFuel,
     /// Limit the memory that can be allocated by the sandbox.
-    pub memory_limits: MemoryLimits
+    pub memory_limits: MemoryLimits,
 }
 impl Default for TsUtilsSandboxConfig {
     fn default() -> Self {
@@ -105,14 +105,11 @@ impl TsUtilsEngine {
 
     pub async fn build(
         &self,
-        config: TsUtilsSandboxConfig
+        config: TsUtilsSandboxConfig,
     ) -> anyhow::Result<TsUtilsSandboxInstance> {
-        let ctx: WasiCtx = WasiCtx::builder()
-            .inherit_stderr()
-            .inherit_stdout()
-            .build();
+        let ctx: WasiCtx = WasiCtx::builder().inherit_stderr().inherit_stdout().build();
         let mut store = Store::new(
-            &self.engine, 
+            &self.engine,
             SandboxState {
                 wasi_ctx: ctx,
                 wasi_http: WasiHttpCtx::new(),
@@ -172,14 +169,11 @@ impl TsUtilsSandboxInstance {
     pub fn get_fuel_remaining(&self) -> u64 {
         self.store.get_fuel().unwrap_or(0)
     }
-    pub async fn strip_types(
-        &mut self,
-        code: &str,
-    ) -> Result<String, TsUtilsEvaluateError> {
+    pub async fn strip_types(&mut self, code: &str) -> Result<String, TsUtilsEvaluateError> {
         let result = self
             .sandbox
             .local_ts_utils_ts_utils_impl()
-            .call_strip_types_only(&mut self.store, code)
+            .call_strip_types(&mut self.store, code)
             .await;
         if result.is_err() && self.store.get_fuel().unwrap_or(0) == 0 {
             return Err(TsUtilsEvaluateError::FuelExhausted);
@@ -190,16 +184,20 @@ impl TsUtilsSandboxInstance {
     pub async fn validate_module(
         &mut self,
         code: &str,
-        mode: ValidateModuleMode
+        mode: ValidateModuleMode,
     ) -> Result<ValidateModuleResult, TsUtilsEvaluateError> {
-        let sandbox = self
-            .sandbox
-            .local_ts_utils_ts_utils_impl();
+        let sandbox = self.sandbox.local_ts_utils_ts_utils_impl();
         let result = match mode {
-            ValidateModuleMode::JavaScript => sandbox
-                .call_compile_module_only(&mut self.store, code).await,
-            ValidateModuleMode::TypeScript => sandbox
-                .call_strip_types_and_compile_module(&mut self.store, code).await,
+            ValidateModuleMode::JavaScript => {
+                sandbox
+                    .call_compile_module(&mut self.store, code)
+                    .await
+            }
+            ValidateModuleMode::TypeScript => {
+                sandbox
+                    .call_strip_types_and_compile_module(&mut self.store, code)
+                    .await
+            }
         };
         if result.is_err() && self.store.get_fuel().unwrap_or(0) == 0 {
             return Err(TsUtilsEvaluateError::FuelExhausted);
@@ -209,8 +207,7 @@ impl TsUtilsSandboxInstance {
         Ok(ValidateModuleResult {
             has_dynamic_import: result.has_dynamic_import,
             static_imports: result.static_imports,
-            named_exports: result.named_exports,
-            star_exports: result.star_exports,
+            exports: result.exports,
         })
     }
 }

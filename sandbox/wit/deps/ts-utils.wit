@@ -1,16 +1,29 @@
 package local:ts-utils;
 
 interface ts-utils-impl {
+  variant static-import-usage {
+    named(list<string>),
+    star,
+  }
+  record static-import {
+    source: string,
+    usage: static-import-usage,
+  }
+  // In JS these look like {"tag":"named","val":"some_string"}
+  variant module-export {
+    named(string),
+    star(string),
+  }
   record compiled-module {
     has-dynamic-import: bool,
-    static-imports: list<string>,
+    static-imports: list<static-import>,
+    exports: list<module-export>,
     code: string,
-    named-exports: list<string>,
-    star-exports: list<string>
   }
 
-  strip-types-only: func(script: string) -> result<string, string>;
-  compile-module-only: func(script: string) -> result<compiled-module, string>;
+
+  strip-types: func(script: string) -> result<string, string>;
+  compile-module: func(script: string) -> result<compiled-module, string>;
   strip-types-and-compile-module: func(script: string) -> result<compiled-module, string>;
 }
 

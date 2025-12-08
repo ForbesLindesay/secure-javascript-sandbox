@@ -208,10 +208,12 @@ console.log(
 console.log(
   await validateModule(
   `
+      import * as x from "/x.js";
       import fib from "http://example.com/fib.js";
       export async function run(n: number) {
         return fib(n);
       }
+      export * from "/y.js";
     `,
     "TYPESCRIPT"
   )
@@ -236,3 +238,4 @@ console.log(
 
 proc.kill();
 server.close();
+

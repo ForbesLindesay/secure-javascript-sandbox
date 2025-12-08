@@ -95,7 +95,7 @@ impl SandboxEngine {
             .stderr(stderr.clone())
             .build();
         let mut store = Store::new(
-            &self.engine, 
+            &self.engine,
             SandboxState {
                 wasi_ctx: ctx,
                 wasi_http: WasiHttpCtx::new(),
@@ -113,7 +113,12 @@ impl SandboxEngine {
         store.set_fuel(cpu_fuel.into())?;
         let sandbox =
             bindings::Root::instantiate_async(&mut store, &self.component, &self.linker).await?;
-        Ok(SandboxInstance { store, sandbox, stdout, stderr })
+        Ok(SandboxInstance {
+            store,
+            sandbox,
+            stdout,
+            stderr,
+        })
     }
     pub async fn evaluate(
         &self,
@@ -121,8 +126,27 @@ impl SandboxEngine {
         parameters: &[serde_json::Value],
         config: SandboxConfig,
     ) -> SandboxEvaluationResult {
-        match self.build(config.cpu_fuel, config.memory_limits, config.http, config.request_limit).await {
-            Ok(instance) => instance.evaluate(code, parameters, &EvaluateOptions { mode: config.mode, strip_typescript_types: config.strip_typescript_types }).await,
+        match self
+            .build(
+                config.cpu_fuel,
+                config.memory_limits,
+                config.http,
+                config.request_limit,
+            )
+            .await
+        {
+            Ok(instance) => {
+                instance
+                    .evaluate(
+                        code,
+                        parameters,
+                        &EvaluateOptions {
+                            mode: config.mode,
+                            strip_typescript_types: config.strip_typescript_types,
+                        },
+                    )
+                    .await
+            }
             Err(err) => SandboxEvaluationResult {
                 result: Err(EvaluateError::WasmError(err)),
                 stdout: String::new(),
@@ -177,15 +201,16 @@ struct SandboxInstance {
     stderr: MemoryOutputPipe,
 }
 impl SandboxInstance {
-    fn handle_result(
-        self,
-        result: Result<(), anyhow::Error>,
-    ) -> SandboxEvaluationResult {
+    fn handle_result(self, result: Result<(), anyhow::Error>) -> SandboxEvaluationResult {
         let full_stdout = take_memory_pipe_contents(self.stdout);
         let full_stderr = take_memory_pipe_contents(self.stderr);
         let mut stdout = full_stdout.split("73914D86-55DF-495D-BAD5-B45D571D154D");
         let stdout_str = stdout.next();
-        let result_str = stdout.next().and_then(|result_str| result_str.split("8C47F950-3E81-46B1-976E-177A89380038").next());
+        let result_str = stdout.next().and_then(|result_str| {
+            result_str
+                .split("8C47F950-3E81-46B1-976E-177A89380038")
+                .next()
+        });
         let mut stderr = full_stderr.split("E8FEE14A-BBF5-4B08-9E00-6D61189D897D");
         let stderr_str = stderr.next();
         let error_str = stderr.next();
@@ -193,7 +218,9 @@ impl SandboxInstance {
         let result = if result.is_err() && self.store.get_fuel().unwrap_or(0) == 0 {
             Err(crate::EvaluateError::FuelExhausted)
         } else if let Some(error_str) = error_str {
-            Err(crate::EvaluateError::JavaScriptError(error_str.trim_ascii().to_string()))
+            Err(crate::EvaluateError::JavaScriptError(
+                error_str.trim_ascii().to_string(),
+            ))
         } else if let Some(result_str) = result_str {
             serde_json::from_str(result_str).map_err(Into::into)
         } else if let Some(err) = result.err() {
@@ -230,7 +257,7 @@ impl SandboxInstance {
                     max_requested_memory_bytes: self.store.data().max_requested_memory_bytes,
                     max_requested_table_elements: self.store.data().max_requested_table_elements,
                     outbound_requests: self.store.data().requests.take(),
-                }
+                };
             }
         };
         let result = match &options.mode {
@@ -286,7 +313,6 @@ fn take_memory_pipe_contents(pipe: MemoryOutputPipe) -> String {
         .map(|s| s.to_owned())
         .unwrap_or_else(|_| "<invalid utf8 output>".to_string())
 }
-
 
 // #[non_exhaustive]
 #[derive(Clone)]

@@ -2,6 +2,54 @@ mod module_compiler;
 mod module_visitor;
 mod type_stripper;
 
-pub use module_visitor::Export;
-pub use module_compiler::{CompiledModule, compile_module};
-pub use type_stripper::strip_types_only;
+#[cfg(target_env = "p2")]
+mod bindings {
+    use crate::wasm_implementation::TsUtils;
+    wit_bindgen::generate!({
+        path: "wit/ts-utils.wit",
+    });
+    export!(TsUtils);
+}
+#[cfg(not(target_env = "p2"))]
+mod bindings {
+    wit_bindgen::generate!({
+        path: "wit/ts-utils.wit",
+    });
+}
+
+#[cfg(target_env = "p2")]
+pub(crate) mod wasm_implementation {
+    use crate::implementation;
+    use crate::bindings::exports::local::ts_utils::ts_utils_impl::Guest;
+    pub(crate) struct TsUtils;
+    impl Guest for TsUtils {
+        fn strip_types(script: String) -> Result<String, String> {
+            implementation::strip_types(script).map_err(|e| e.to_string())
+        }
+
+        fn compile_module(script: String) -> Result<implementation::CompiledModule, String> {
+            implementation::compile_module(script).map_err(|e| e.to_string())
+        }
+
+        fn strip_types_and_compile_module(script: String) -> Result<implementation::CompiledModule, String> {
+            implementation::strip_types_and_compile_module(script).map_err(|e| e.to_string())
+        }
+    }
+}
+
+mod implementation {
+    pub use crate::bindings::exports::local::ts_utils::ts_utils_impl::{
+        CompiledModule, ModuleExport, StaticImport, StaticImportUsage,
+    };
+    pub use crate::module_compiler::compile_module;
+    pub use crate::type_stripper::strip_types;
+
+    pub fn strip_types_and_compile_module(script: String) -> anyhow::Result<CompiledModule> {
+        // TODO: share AST for better efficiency?
+        let stripped = strip_types(script)?;
+        compile_module(stripped)
+    }
+}
+
+#[cfg(not(target_env = "p2"))]
+pub use implementation::*;
