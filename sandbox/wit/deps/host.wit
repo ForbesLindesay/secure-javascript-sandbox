@@ -1,0 +1,14 @@
+package local:host;
+
+interface host-impl {
+  variant resolved-module {
+    url(string),
+    id(string),
+  }
+  resolve-import-path: func(path: string, parent: string) -> result<resolved-module, string>;
+  load-import: func(id: string) -> result<string, string>;
+}
+
+world host {
+  export host-impl;
+}

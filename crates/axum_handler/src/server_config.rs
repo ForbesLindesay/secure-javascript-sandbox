@@ -1,32 +1,32 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
-    CpuFuel, EvaluateMode, HttpMode, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit,
-    ResourceLimit, SandboxConfig, TableLimit,
+    CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode, ImportMap, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, TableLimit
 };
 
 use crate::env::get_env;
 use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
 
-pub struct EvaluateInput {
+pub struct EvaluateInput<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
     pub code: String,
     pub parameters: Vec<serde_json::Value>,
-    pub config: SandboxConfig,
+    pub config: SandboxConfig<THttpMode, TImportMap>,
 }
 
-pub trait SandboxServerConfigTrait<TRequestType>: Send + Sync + 'static
+pub trait CustomSandboxServerConfig<TRequestType, THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap>: Send + Sync + 'static
 where
     TRequestType: DeserializeOwned + Send + 'static,
 {
-    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput;
+    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap>;
 }
 
-impl<TRequestType: DeserializeOwned + Send + 'static, T: SandboxServerConfigTrait<TRequestType>>
-    SandboxServerConfigTrait<TRequestType> for Arc<T>
+impl<TRequestType: DeserializeOwned + Send + 'static, THttpMode: CustomHttpMode, TImportMap: CustomImportMap, T: CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap>>
+    CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap> for Arc<T>
 {
-    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput {
+    fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap> {
         self.as_ref().get_evaluate_input(request)
     }
 }
@@ -101,19 +101,13 @@ impl Default for SandboxServerMemoryLimits {
     }
 }
 
-#[derive(Deserialize)]
-pub struct SandboxServerConfig {
-    #[serde(default)]
+pub struct SandboxServerConfig<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap + Clone = ImportMap> {
     pub cpu_fuel: CpuFuel,
-    #[serde(default)]
     pub memory_limits: SandboxServerMemoryLimits,
-    #[serde(default)]
-    pub http: HttpMode,
-    #[serde(default)]
+    pub http: THttpMode,
     pub request_limit: RequestLimit,
-    #[serde(default)]
+    pub import_map: TImportMap,
     pub sandbox_auto_strip_types: bool,
-    #[serde(default)]
     pub module_method: Option<Box<str>>,
 }
 
@@ -124,13 +118,14 @@ impl Default for SandboxServerConfig {
             memory_limits: Default::default(),
             http: Default::default(),
             request_limit: Default::default(),
+            import_map: Default::default(),
             sandbox_auto_strip_types: false,
             module_method: None,
         }
     }
 }
 
-impl SandboxServerConfig {
+impl SandboxServerConfig{
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = Self::default();
         config.memory_limits.set_from_env("SANDBOX")?;
@@ -149,13 +144,16 @@ impl SandboxServerConfig {
         if let Some(module_method) = get_env::<String>("SANDBOX_MODULE_METHOD")? {
             config.module_method = Some(module_method.into_boxed_str());
         }
+        if let Some(imports_directory) = get_env::<PathBuf>("SANDBOX_IMPORTS_DIRECTORY")? {
+            config.import_map = ImportMap::AllowFolder(imports_directory.into_boxed_path().into());
+        }
 
         Ok(config)
     }
 }
 
-impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
-    fn get_evaluate_input(&self, request: EvaluateRequest) -> EvaluateInput {
+impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone> CustomSandboxServerConfig<EvaluateRequest, THttpMode, TImportMap> for SandboxServerConfig<THttpMode, TImportMap> {
+    fn get_evaluate_input(&self, request: EvaluateRequest) -> EvaluateInput<THttpMode, TImportMap> {
         EvaluateInput {
             code: request.code,
             parameters: request.parameters,
@@ -163,6 +161,7 @@ impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
                 cpu_fuel: self.cpu_fuel,
                 memory_limits: self.memory_limits.to_memory_limits(),
                 http: self.http.clone(),
+                imports: self.import_map.clone(),
                 request_limit: self.request_limit,
                 mode: match &self.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method.clone()),
@@ -174,9 +173,29 @@ impl SandboxServerConfigTrait<EvaluateRequest> for SandboxServerConfig {
     }
 }
 
-pub struct AllowRequestToConfigureSandbox;
-impl SandboxServerConfigTrait<EvaluateRequestWithConfig> for AllowRequestToConfigureSandbox {
-    fn get_evaluate_input(&self, request: EvaluateRequestWithConfig) -> EvaluateInput {
+pub struct AllowRequestToConfigureSandbox<TImportMap: CustomImportMap + Clone = ImportMap> {
+    pub import_map: TImportMap,
+}
+impl Default for AllowRequestToConfigureSandbox {
+    fn default() -> Self {
+        AllowRequestToConfigureSandbox {
+            import_map: Default::default(),
+        }
+    }
+}
+
+impl AllowRequestToConfigureSandbox {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let mut config = Self::default();
+        if let Some(imports_directory) = get_env::<PathBuf>("SANDBOX_IMPORTS_DIRECTORY")? {
+            config.import_map = ImportMap::AllowFolder(imports_directory.into_boxed_path().into());
+        }
+
+        Ok(config)
+    }
+}
+impl<TImportMap: CustomImportMap + Clone> CustomSandboxServerConfig<EvaluateRequestWithConfig, HttpMode, TImportMap> for AllowRequestToConfigureSandbox<TImportMap>{
+    fn get_evaluate_input(&self, request: EvaluateRequestWithConfig) -> EvaluateInput<HttpMode, TImportMap> {
         EvaluateInput {
             code: request.code,
             parameters: request.parameters,
@@ -184,6 +203,7 @@ impl SandboxServerConfigTrait<EvaluateRequestWithConfig> for AllowRequestToConfi
                 cpu_fuel: request.config.cpu_fuel,
                 memory_limits: request.config.memory_limits.to_memory_limits(),
                 http: request.config.http,
+                imports: self.import_map.clone(),
                 request_limit: request.config.request_limit,
                 mode: match request.config.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method),

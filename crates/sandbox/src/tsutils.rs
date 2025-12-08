@@ -5,18 +5,22 @@ use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
+use crate::http::BlockAllHttp;
+use crate::imports::ImportMapBlockAll;
 use crate::state::SandboxState;
-use crate::{CpuFuel, HttpMode, MemoryLimits};
+use crate::{CpuFuel, MemoryLimits};
 
 mod bindings {
     wasmtime::component::bindgen!({
-        path: "src/tsutils.wit",
+        path: "src/tsutils",
         exports: {
             default: async
         }
     });
 }
-pub use bindings::exports::local::ts_utils::ts_utils_impl::{StaticImport, StaticImportUsage, ModuleExport};
+pub use bindings::exports::local::ts_utils::ts_utils_impl::{
+    ModuleExport, StaticImport, StaticImportUsage,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValidateModuleMode {
@@ -70,7 +74,7 @@ impl Default for TsUtilsSandboxConfig {
 pub struct TsUtilsEngine {
     engine: Engine,
     component: Component,
-    linker: Linker<SandboxState>,
+    linker: Linker<SandboxState<ImportMapBlockAll, BlockAllHttp>>,
 }
 
 impl TsUtilsEngine {
@@ -84,7 +88,7 @@ impl TsUtilsEngine {
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
         let engine = Engine::new(&engine_config).unwrap();
-        let mut linker: Linker<SandboxState> = Linker::new(&engine);
+        let mut linker: Linker<SandboxState<ImportMapBlockAll, BlockAllHttp>> = Linker::new(&engine);
 
         // Wasi Provides support for accessing system APIs from the sandbox.
         // System APIs are only exposed based on the capabilities in the WasiCtx
@@ -94,7 +98,7 @@ impl TsUtilsEngine {
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
 
         let component: Component =
-            unsafe { Component::deserialize(&engine, include_bytes!("tsutils.bin"))? };
+            unsafe { Component::deserialize(&engine, include_bytes!("tsutils/tsutils.bin"))? };
 
         Ok(Self {
             engine,
@@ -115,7 +119,8 @@ impl TsUtilsEngine {
                 wasi_http: WasiHttpCtx::new(),
                 resource_table: ResourceTable::default(),
                 memory_limits: config.memory_limits,
-                http: HttpMode::BlockAll,
+                http: BlockAllHttp,
+                imports: ImportMapBlockAll,
                 request_limit: 0.into(),
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
@@ -159,7 +164,7 @@ impl From<wasmtime::Error> for TsUtilsEvaluateError {
 }
 pub struct TsUtilsSandboxInstance {
     sandbox: bindings::TsUtils,
-    store: wasmtime::Store<crate::state::SandboxState>,
+    store: wasmtime::Store<crate::state::SandboxState<ImportMapBlockAll, BlockAllHttp>>,
 }
 impl TsUtilsSandboxInstance {
     pub fn set_fuel(&mut self, fuel: CpuFuel) -> anyhow::Result<()> {
@@ -189,9 +194,7 @@ impl TsUtilsSandboxInstance {
         let sandbox = self.sandbox.local_ts_utils_ts_utils_impl();
         let result = match mode {
             ValidateModuleMode::JavaScript => {
-                sandbox
-                    .call_compile_module(&mut self.store, code)
-                    .await
+                sandbox.call_compile_module(&mut self.store, code).await
             }
             ValidateModuleMode::TypeScript => {
                 sandbox

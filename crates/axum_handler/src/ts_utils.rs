@@ -53,14 +53,9 @@ pub enum StaticImport {
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub enum ModuleExport {
-    NAMED {
-        name: String,
-    },
-    STAR {
-        source: String,
-    }
+    NAMED { name: String },
+    STAR { source: String },
 }
-
 
 #[derive(Serialize)]
 pub struct TsResponseFailure {
@@ -172,31 +167,29 @@ pub async fn validate_module(
         Ok(result) => ValidateModuleResponse::Success(ValidateModuleResponseSuccess {
             success: true,
             has_dynamic_import: result.has_dynamic_import,
-            static_imports: result.static_imports.into_iter().map(|import| {
-                match import.usage {
-                    secure_js_sandbox::StaticImportUsage::Named (imported_names) => {
+            static_imports: result
+                .static_imports
+                .into_iter()
+                .map(|import| match import.usage {
+                    secure_js_sandbox::StaticImportUsage::Named(imported_names) => {
                         StaticImport::NAMED {
                             source: import.source,
                             imported_names,
                         }
+                    }
+                    secure_js_sandbox::StaticImportUsage::Star => StaticImport::STAR {
+                        source: import.source,
                     },
-                    secure_js_sandbox::StaticImportUsage::Star => {
-                        StaticImport::STAR {
-                            source: import.source,
-                        }
-                    },
-                }
-            }).collect(),
-            exports: result.exports.into_iter().map(|export| {
-                match export {
-                    secure_js_sandbox::ModuleExport::Named(name) => {
-                        ModuleExport::NAMED { name }
-                    },
-                    secure_js_sandbox::ModuleExport::Star(source) => {
-                        ModuleExport::STAR { source }
-                    },
-                }
-            }).collect(),
+                })
+                .collect(),
+            exports: result
+                .exports
+                .into_iter()
+                .map(|export| match export {
+                    secure_js_sandbox::ModuleExport::Named(name) => ModuleExport::NAMED { name },
+                    secure_js_sandbox::ModuleExport::Star(source) => ModuleExport::STAR { source },
+                })
+                .collect(),
         }),
         Err(err) => ValidateModuleResponse::Failure(TsResponseFailure {
             success: false,

@@ -77,6 +77,9 @@ SANDBOX_AUTO_STRIP_TYPES="false"
 # instead of treating it as a function expression. This does incur
 # a small performance overhead.
 SANDBOX_MODULE_METHOD=NULL
+# Set this to a directory path to allow JavaScript to import modules
+# from that directory, instead of allowing HTTP imports.
+SANDBOX_IMPORTS_DIRECTORY=NULL
 
 # Whether to expose a /strip_types endpoint to remove TypeScript
 # annotations from JavaScript, 

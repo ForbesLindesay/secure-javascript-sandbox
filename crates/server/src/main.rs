@@ -29,7 +29,7 @@ pub async fn start_server() -> anyhow::Result<()> {
     if get_env("SANDBOX_ALLOW_CONFIG_IN_REQUEST")?.unwrap_or(false) {
         app = app.route(
             "/evaluate",
-            post(create_evaluate_handler(AllowRequestToConfigureSandbox).await?),
+            post(create_evaluate_handler(AllowRequestToConfigureSandbox::from_env()?).await?),
         );
     } else {
         app = app.route(

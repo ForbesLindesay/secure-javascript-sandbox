@@ -6,25 +6,32 @@ use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
 use crate::state::SandboxState;
-use crate::{CpuFuel, HttpMode, MemoryLimits, RequestLimit};
+use crate::{CpuFuel, CustomHttpMode, CustomImportMap, HttpMode, ImportMap, MemoryLimits, RequestLimit};
 
 mod bindings {
     wasmtime::component::bindgen!({
-        path: "src/sandbox.wit",
+        path: "src/sandbox",
+        imports: {
+            "local:host": async
+        },
         exports: {
             default: async
         }
     });
 }
 
+pub(crate) use bindings::local::host::host_impl::Host;
+pub use bindings::local::host::host_impl::ResolvedModule;
+
 #[derive(Clone)]
-pub struct SandboxConfig {
+pub struct SandboxConfig<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
     /// Limit of CPU instructions that can be executed in this sandbox.
     pub cpu_fuel: CpuFuel,
     /// Limit the memory that can be allocated by the sandbox.
     pub memory_limits: MemoryLimits,
     /// Allow/block outbound http(s) requests.
-    pub http: HttpMode,
+    pub http: THttpMode,
+    pub imports: TImportMap,
     /// Limit the number of outbound HTTP requests that can be made.
     pub request_limit: RequestLimit,
     /// Evaluate as a module by calling an exported method, or as a function expression.
@@ -38,6 +45,7 @@ impl Default for SandboxConfig {
             cpu_fuel: Default::default(),
             memory_limits: Default::default(),
             http: Default::default(),
+            imports: Default::default(),
             request_limit: Default::default(),
             mode: Default::default(),
             strip_typescript_types: false,
@@ -45,13 +53,13 @@ impl Default for SandboxConfig {
     }
 }
 
-pub struct SandboxEngine {
+pub struct SandboxEngine<THttpMode: CustomHttpMode = HttpMode, TImportMap: CustomImportMap = ImportMap> {
     engine: Engine,
     component: Component,
-    linker: Linker<SandboxState>,
+    linker: Linker<SandboxState<TImportMap, THttpMode>>,
 }
 
-impl SandboxEngine {
+impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttpMode, TImportMap> {
     pub fn new() -> anyhow::Result<Self> {
         let mut engine_config = Config::new();
         // engine_config.cache_config_load_default().unwrap();
@@ -62,7 +70,7 @@ impl SandboxEngine {
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
         let engine = Engine::new(&engine_config).unwrap();
-        let mut linker: Linker<SandboxState> = Linker::new(&engine);
+        let mut linker: Linker<SandboxState<TImportMap, THttpMode>> = Linker::new(&engine);
 
         // Wasi Provides support for accessing system APIs from the sandbox.
         // System APIs are only exposed based on the capabilities in the WasiCtx
@@ -70,9 +78,13 @@ impl SandboxEngine {
         // to work from within JavaScript.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        bindings::local::host::host_impl::add_to_linker::<SandboxState<TImportMap, THttpMode>, SandboxState<TImportMap, THttpMode>>(
+            &mut linker,
+            |s| s,
+        )?;
 
         let component: Component =
-            unsafe { Component::deserialize(&engine, include_bytes!("sandbox.bin"))? };
+            unsafe { Component::deserialize(&engine, include_bytes!("sandbox/sandbox.bin"))? };
 
         Ok(Self {
             engine,
@@ -85,9 +97,10 @@ impl SandboxEngine {
         &self,
         cpu_fuel: CpuFuel,
         memory_limits: MemoryLimits,
-        http: HttpMode,
+        http: THttpMode,
+        imports: TImportMap,
         request_limit: RequestLimit,
-    ) -> anyhow::Result<SandboxInstance> {
+    ) -> anyhow::Result<SandboxInstance<THttpMode, TImportMap>> {
         let stdout = MemoryOutputPipe::new(memory_limits.stdout_bytes.into());
         let stderr = MemoryOutputPipe::new(memory_limits.stderr_bytes.into());
         let ctx: WasiCtx = WasiCtx::builder()
@@ -102,6 +115,7 @@ impl SandboxEngine {
                 resource_table: ResourceTable::default(),
                 memory_limits,
                 http,
+                imports,
                 request_limit,
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
@@ -124,13 +138,14 @@ impl SandboxEngine {
         &self,
         code: &str,
         parameters: &[serde_json::Value],
-        config: SandboxConfig,
+        config: SandboxConfig<THttpMode, TImportMap>,
     ) -> SandboxEvaluationResult {
         match self
             .build(
                 config.cpu_fuel,
                 config.memory_limits,
                 config.http,
+                config.imports,
                 config.request_limit,
             )
             .await
@@ -194,13 +209,13 @@ impl From<serde_json::Error> for EvaluateError {
     }
 }
 
-struct SandboxInstance {
+struct SandboxInstance<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> {
     sandbox: bindings::Root,
-    store: wasmtime::Store<crate::state::SandboxState>,
+    store: wasmtime::Store<crate::state::SandboxState<TImportMap, THttpMode>>,
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
 }
-impl SandboxInstance {
+impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxInstance<THttpMode, TImportMap> {
     fn handle_result(self, result: Result<(), anyhow::Error>) -> SandboxEvaluationResult {
         let full_stdout = take_memory_pipe_contents(self.stdout);
         let full_stderr = take_memory_pipe_contents(self.stderr);

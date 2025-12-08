@@ -1,6 +1,7 @@
 package local:sandbox;
 
 world sandbox {
+  import local:host/host-impl;
   import local:ts-utils/ts-utils-impl;
   export evaluate-module: func(code: string, method: string, args: list<string>, strip-types: bool);
   export evaluate: func(code: string, args: list<string>, stip-types: bool);

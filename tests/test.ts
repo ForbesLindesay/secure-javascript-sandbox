@@ -1,5 +1,6 @@
 // node --experimental-strip-types tests/test.ts
 
+import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 
@@ -31,36 +32,36 @@ if (buildProcExit !== 0) {
   process.exit(buildProcExit);
 }
 
-const proc = spawn('cargo', [`run`, `secure_js_sandbox_server`], {
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    SANDBOX_HTTP_MODE: "ALLOW_ALL",
-    SANDBOX_AUTO_STRIP_TYPES: "true",
-    SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT: "true",
-    SANDBOX_ENABLE_VALIDATE_MODULE_ENDPOINT: "true",
-    SANDBOX_MODULE_METHOD: "run",
-    SANDBOX_REQUEST_LIMIT: "10",
-    TS_UTILS_CPU_FUEL: `1_000_000`,
-    TS_UTILS_MAX_MEMORY_BYTES: `10MB`,
+let proc: ReturnType<typeof spawn> | undefined;
+async function startServer(env: Record<string, string>) {
+  if (proc) {
+    proc.kill();
   }
-})
 
-const timeout = Date.now() + 10_000;
-let lastLog = Date.now();
-let successCount = 0;
-while (timeout > Date.now() && successCount < 10) {
-  try {
-    const res = await fetch('http://localhost:3000');
-    if (res.ok) {
-      successCount++;
+  proc = spawn('cargo', [`run`, `secure_js_sandbox_server`], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      ...env,
     }
-  } catch (e) {
-    // ignore
-  }
-  if (Date.now() - lastLog > 1_000) {
-    console.log('Waiting for server to start...');
-    lastLog = Date.now();
+  })
+
+  const timeout = Date.now() + 10_000;
+  let lastLog = Date.now();
+  let successCount = 0;
+  while (timeout > Date.now() && successCount < 10) {
+    try {
+      const res = await fetch('http://localhost:3000');
+      if (res.ok) {
+        successCount++;
+      }
+    } catch (e) {
+      // ignore
+    }
+    if (Date.now() - lastLog > 1_000) {
+      console.log('Waiting for server to start...');
+      lastLog = Date.now();
+    }
   }
 }
 
@@ -103,6 +104,17 @@ async function validateModule(code: string, mode?: "JAVASCRIPT" | "TYPESCRIPT") 
   const outcome = await response.json();
   return outcome;
 }
+
+await startServer({
+  SANDBOX_HTTP_MODE: "ALLOW_ALL",
+  SANDBOX_AUTO_STRIP_TYPES: "true",
+  SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT: "true",
+  SANDBOX_ENABLE_VALIDATE_MODULE_ENDPOINT: "true",
+  SANDBOX_MODULE_METHOD: "run",
+  SANDBOX_REQUEST_LIMIT: "10",
+  TS_UTILS_CPU_FUEL: `1_000_000`,
+  TS_UTILS_MAX_MEMORY_BYTES: `10MB`,
+})
 
 console.log(await run({
   code: `
@@ -236,6 +248,20 @@ console.log(
 //   args: []
 // }))
 
-proc.kill();
 server.close();
 
+
+await startServer({
+  SANDBOX_IMPORTS_DIRECTORY: join(import.meta.dirname, 'imports'),
+  SANDBOX_MODULE_METHOD: "run",
+})
+
+console.log(await run({
+  code: `import { fib } from 'fib.js';
+  export async function run(n) {
+    return fib(n);
+  }`,
+  parameters: [10]
+}))
+
+proc.kill();

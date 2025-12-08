@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 mod http;
+mod imports;
 mod ip_utils;
 mod limit_values;
 mod memory;
@@ -10,15 +11,16 @@ mod tsutils;
 
 pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
+
+pub use imports::{CustomImportMap, ImportMap, ResolvedModule};
 pub use limit_values::{
     CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit,
 };
 pub use memory::MemoryLimits;
 pub use sandbox::{EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine};
 pub use tsutils::{
-    TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig, TsUtilsSandboxInstance,
-    ValidateModuleMode,
-    StaticImport, StaticImportUsage, ModuleExport
+    ModuleExport, StaticImport, StaticImportUsage, TsUtilsEngine, TsUtilsEvaluateError,
+    TsUtilsSandboxConfig, TsUtilsSandboxInstance, ValidateModuleMode,
 };
 pub use wasmtime::{StoreLimits, StoreLimitsBuilder};
 pub use wasmtime_wasi::WasiCtx;

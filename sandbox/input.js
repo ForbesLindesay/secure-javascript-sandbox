@@ -1,4 +1,5 @@
 import { stripTypes, stripTypesAndCompileModule, compileModule } from "local:ts-utils/ts-utils-impl";
+import { resolveImportPath, loadImport } from "local:host/host-impl";
 
 async function output(fn) {
   try {
@@ -11,50 +12,57 @@ async function output(fn) {
     console.error(formatError(error))
   }
 }
-export async function evaluateModule(code, method, args, stripTypes) {
+export async function evaluateModule(code, method, args, shouldStripTypes) {
   // TODO: handle cycles
   const moduleCache = new Map()
-  async function $import(moduleName) {
-    if (moduleCache.has(moduleName)) {
-      return moduleCache.get(moduleName)
+  async function $import(modulePath, parent) {
+    const resolved = await resolveImportPath(modulePath, parent)
+    const id = resolved.val
+    if (moduleCache.has(id)) {
+      return moduleCache.get(id)
     }
     const modulePromise = Promise.resolve().then(async () => {
-      const moduleResponse = await fetch(moduleName)
-      if (!moduleResponse.ok) {
-        throw new Error(`Failed to load module: ${moduleName} (${moduleResponse.status} ${moduleResponse.statusText}): ${await moduleResponse.text()}`)
-      }
-      return await evaluateCompiledModule(compileModule(await moduleResponse.text()), moduleName)
+      const moduleSource = resolved.tag === "id"
+        ? await loadImport(id)
+        : resolved.tag === "url"
+        ? await fetch(id).then(async res => {
+            if (!res.ok) {
+              throw new Error(`Failed to load module from URL: ${resolved.val}, status: ${res.status}: ${await res.text()}`)
+            }
+            return await res.text()
+          })
+        : (() => {throw new Error("Unexpected tag")})()
+      return await evaluateCompiledModule(compileModule(moduleSource), id)
     })
-    moduleCache.set(moduleName, modulePromise)
+    moduleCache.set(id, modulePromise)
     return modulePromise
   }
 
   async function evaluateCompiledModule(compiled, moduleName) {
-    console.log(JSON.stringify(compiled))
     let fn
     try {
       fn = new Function(`return (${compiled.code})`)()
     } catch {
       throw new Error(`Syntax error in module: ${moduleName}`)
     }
-    const dependencies = await Promise.all(compiled.staticImports.map(({source}) => $import(source)))
+    const dependencies = await Promise.all(compiled.staticImports.map(({source}) => $import(source, moduleName)))
     if (compiled.hasDynamicImport) {
-      dependencies.unshift($import)
+      dependencies.unshift(path => $import(path, moduleName))
     }
     return await fn(...dependencies)
   }
 
   await output(async () => {
-    const compiled = await stripTypes ? stripTypesAndCompileModule(code) : compileModule(code);
+    const compiled = await shouldStripTypes ? stripTypesAndCompileModule(code) : compileModule(code);
     const module = await evaluateCompiledModule(compiled, '<main>');
     const fn = module[method];
     return await fn(...args.map(arg => JSON.parse(arg)))
   })
 }
 
-export async function evaluate(code, args, stripTypes) {
+export async function evaluate(code, args, shouldStripTypes) {
   await output(async () => {
-    const compiled = await stripTypes ? stripTypes(`(${code})`) : `(${code})`;
+    const compiled = await shouldStripTypes ? stripTypes(`(${code})`) : `(${code})`;
     let fn
     try {
       fn = new Function(`return ${compiled}`)()

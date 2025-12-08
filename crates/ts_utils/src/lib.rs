@@ -19,8 +19,8 @@ mod bindings {
 
 #[cfg(target_env = "p2")]
 pub(crate) mod wasm_implementation {
-    use crate::implementation;
     use crate::bindings::exports::local::ts_utils::ts_utils_impl::Guest;
+    use crate::implementation;
     pub(crate) struct TsUtils;
     impl Guest for TsUtils {
         fn strip_types(script: String) -> Result<String, String> {
@@ -31,7 +31,9 @@ pub(crate) mod wasm_implementation {
             implementation::compile_module(script).map_err(|e| e.to_string())
         }
 
-        fn strip_types_and_compile_module(script: String) -> Result<implementation::CompiledModule, String> {
+        fn strip_types_and_compile_module(
+            script: String,
+        ) -> Result<implementation::CompiledModule, String> {
             implementation::strip_types_and_compile_module(script).map_err(|e| e.to_string())
         }
     }

@@ -1,4 +1,7 @@
-use crate::{implementation::{CompiledModule, ModuleExport, StaticImport, StaticImportUsage}, module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement}};
+use crate::{
+    implementation::{CompiledModule, ModuleExport, StaticImport, StaticImportUsage},
+    module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement},
+};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use swc_common::{FileName, SourceMap, comments::SingleThreadedComments, errors::Handler};
@@ -145,17 +148,13 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         static_imports.push(StaticImport {
             source: src.to_string(),
             usage: match import.pattern {
-                ModuleInputPattern::Ident(_) => {
-                    StaticImportUsage::Star
-                }
-                ModuleInputPattern::ObjectPat(items) => {
-                    StaticImportUsage::Named(
-                        items
-                            .into_iter()
-                            .map(|item| format!("{}", item.0))
-                            .collect(),
-                    )
-                }
+                ModuleInputPattern::Ident(_) => StaticImportUsage::Star,
+                ModuleInputPattern::ObjectPat(items) => StaticImportUsage::Named(
+                    items
+                        .into_iter()
+                        .map(|item| format!("{}", item.0))
+                        .collect(),
+                ),
             },
         });
     }
@@ -188,9 +187,7 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
             .exports
             .into_iter()
             .map(|export| match export {
-                Export::ExportNamed { exported, .. } => {
-                    ModuleExport::Named(exported.to_string())
-                }
+                Export::ExportNamed { exported, .. } => ModuleExport::Named(exported.to_string()),
                 Export::ExportAll { source, .. } => {
                     let Some(src) = source.value.as_str() else {
                         panic!("import source is not a string");

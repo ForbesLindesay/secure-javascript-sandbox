@@ -87,12 +87,13 @@ if (releaseMode) {
 const utilsWasm = join(import.meta.dirname, `build/tsutils.wasm`);
 const utilsWit = readFileSync(join(dirname(import.meta.dirname), `crates/ts_utils/wit/ts-utils.wit`));
 
+mkdirSync(join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils`), { recursive: true });
 writeFileSync(
-  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils.wasm`),
+  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils/tsutils.wasm`),
   readFileSync(utilsWasm)
 );
 writeFileSync(
-  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils.wit`),
+  join(dirname(import.meta.dirname), `crates/sandbox/src/tsutils/tsutils.wit`),
   utilsWit
 );
 
@@ -196,7 +197,8 @@ for (const stage of [`unbundled`, `bundled`, `final`]) {
 }
 console.log(``);
 
-const rustSandboxDir = join(import.meta.dirname, `../crates/sandbox/src`);
+const rustSandboxDir = join(import.meta.dirname, `../crates/sandbox/src/sandbox`);
+mkdirSync(join(rustSandboxDir, "deps"), { recursive: true });
 writeFileSync(
   join(rustSandboxDir, `sandbox.wasm`),
   readFileSync(join(import.meta.dirname, `build/final.wasm`))
@@ -204,6 +206,10 @@ writeFileSync(
 writeFileSync(
   join(rustSandboxDir, `sandbox.wit`),
   readFileSync(join(import.meta.dirname, `build/final.wit`))
+);
+writeFileSync(
+  join(rustSandboxDir, "deps/host.wit"),
+  readFileSync(join(import.meta.dirname, `wit/deps/host.wit`))
 );
 
 console.log("DONE");

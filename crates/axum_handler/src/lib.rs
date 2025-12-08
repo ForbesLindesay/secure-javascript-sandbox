@@ -12,7 +12,7 @@ pub use crate::evaluate::{create_evaluate_handler, evaluate};
 pub use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
 pub use crate::evaluate_response::{EvaluateResponse, OutboundRequest};
 pub use crate::server_config::{
-    AllowRequestToConfigureSandbox, SandboxServerConfig, SandboxServerConfigTrait,
+    AllowRequestToConfigureSandbox, SandboxServerConfig, CustomSandboxServerConfig,
     SandboxServerMemoryLimits,
 };
 pub use crate::ts_utils::{

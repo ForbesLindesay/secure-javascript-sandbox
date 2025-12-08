@@ -15,4 +15,5 @@ Cargo.lock
 *.bin
 *.wasm
 
-crates/sandbox/src/sandboxes/
+crates/sandbox/src/sandbox/
+crates/sandbox/src/tsutils/

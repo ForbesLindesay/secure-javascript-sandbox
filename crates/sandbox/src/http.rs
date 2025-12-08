@@ -1,17 +1,19 @@
 use std::collections::HashSet;
+use std::error::Error;
 use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use http_body_util::BodyExt;
-use hyper::header;
+use hyper::body::Body;
+use hyper::header::HeaderValue;
+use hyper::{HeaderMap, header};
 use hyper::{Method, Uri};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
 use wasmtime_wasi_http::bindings::http::types::{DnsErrorPayload, ErrorCode};
-use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::hyper_request_error;
 use wasmtime_wasi_http::io::TokioIo;
 use wasmtime_wasi_http::types::{IncomingResponse, OutgoingRequestConfig};
@@ -33,6 +35,17 @@ impl Serialize for RequestValidationOutcome {
             RequestValidationOutcome::Blocked => serializer.serialize_str("BLOCKED"),
         }
     }
+}
+
+pub struct RequestHeaders<'a> {
+    /// The request's method
+    pub method: &'a Method,
+
+    /// The request's URI
+    pub uri: &'a Uri,
+
+    /// The request's headers
+    pub headers: &'a HeaderMap<HeaderValue>,
 }
 
 #[derive(Clone)]
@@ -57,13 +70,20 @@ impl Requests {
     }
 }
 
-pub trait CustomHttpMode: Send + Sync + 'static {
-    fn can_send_request(
-        &self,
-        _request: &hyper::Request<HyperOutgoingBody>,
-        _config: &OutgoingRequestConfig,
-    ) -> bool;
-    fn can_connect(&self, _address: SocketAddr) -> bool;
+pub trait CustomHttpMode: Clone + Send + Sync + 'static {
+    fn can_send_request(&self, request: RequestHeaders) -> bool;
+    fn can_connect(&self, address: SocketAddr) -> bool;
+}
+
+#[derive(Clone)]
+pub(crate) struct BlockAllHttp;
+impl CustomHttpMode for BlockAllHttp {
+    fn can_send_request(&self, _request: RequestHeaders) -> bool {
+        false
+    }
+    fn can_connect(&self, _address: SocketAddr) -> bool {
+        false
+    }
 }
 
 #[derive(Clone)]
@@ -71,7 +91,6 @@ pub enum HttpMode {
     AllowAll,
     AllowGlobalIpOnly,
     AllowListHosts(Arc<HashSet<String>>),
-    Custom(Arc<Box<dyn CustomHttpMode>>),
     BlockAll,
 }
 
@@ -143,22 +162,17 @@ impl FromStr for HttpMode {
 }
 
 impl CustomHttpMode for HttpMode {
-    fn can_send_request(
-        &self,
-        request: &hyper::Request<HyperOutgoingBody>,
-        config: &OutgoingRequestConfig,
-    ) -> bool {
+    fn can_send_request(&self, request: RequestHeaders) -> bool {
         match self {
             HttpMode::AllowAll => true,
             HttpMode::AllowGlobalIpOnly => true,
             HttpMode::AllowListHosts(allowed_hosts) => {
-                if let Some(host) = request.uri().host() {
+                if let Some(host) = request.uri.host() {
                     allowed_hosts.contains(host)
                 } else {
                     false
                 }
             }
-            HttpMode::Custom(ctx) => ctx.can_send_request(request, config),
             HttpMode::BlockAll => false,
         }
     }
@@ -167,7 +181,6 @@ impl CustomHttpMode for HttpMode {
             HttpMode::AllowAll => true,
             HttpMode::AllowGlobalIpOnly => address.ip().is_global_ext(),
             HttpMode::AllowListHosts(_) => true,
-            HttpMode::Custom(ctx) => ctx.can_connect(address),
             HttpMode::BlockAll => false,
         }
     }
@@ -176,18 +189,26 @@ impl CustomHttpMode for HttpMode {
 // Based on use wasmtime_wasi_http::types::default_send_request_handler;
 // but extracted to allow hooking in our own logic for allowing/blocking requests
 // and to handle redirects.
-pub(crate) async fn send_request_handler(
-    request: hyper::Request<HyperOutgoingBody>,
+pub(crate) async fn send_request_handler<T: Body + Default + Send + 'static>(
+    request: hyper::Request<T>,
     config: OutgoingRequestConfig,
-    http_mode: &HttpMode,
+    http_mode: &impl CustomHttpMode,
     requests: Requests,
-) -> Result<IncomingResponse, ErrorCode> {
+) -> Result<IncomingResponse, ErrorCode>
+where
+    T::Data: Send,
+    T::Error: Into<Box<dyn Error + Send + Sync + 'static>>,
+{
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
     while let Some(request) = next_request {
         let (parts, body) = request.into_parts();
         let mut request = hyper::Request::from_parts(parts.clone(), body);
-        if !http_mode.can_send_request(&request, &config) {
+        if !http_mode.can_send_request(RequestHeaders {
+            method: request.method(),
+            uri: request.uri(),
+            headers: request.headers(),
+        }) {
             requests.push((
                 request.uri().clone(),
                 None,
@@ -213,7 +234,7 @@ pub(crate) async fn send_request_handler(
         };
         let (tcp_stream, socket_addr) = timeout(
             connect_timeout,
-            get_tcp_stream(request.uri(), &authority, &http_mode, &requests),
+            get_tcp_stream(request.uri(), &authority, http_mode, &requests),
         )
         .await
         .map_err(|_| ErrorCode::ConnectionTimeout)??;
@@ -308,7 +329,7 @@ pub(crate) async fn send_request_handler(
             if redirect_count >= 20 {
                 return Err(ErrorCode::LoopDetected);
             }
-            let mut request: hyper::Request<HyperOutgoingBody> =
+            let mut request: hyper::Request<T> =
                 hyper::Request::from_parts(parts, Default::default());
             if request.method() != &Method::GET && request.method() != &Method::HEAD {
                 *request.method_mut() = Method::GET;
@@ -340,7 +361,7 @@ pub(crate) async fn send_request_handler(
 async fn get_tcp_stream(
     uri: &Uri,
     authority: &str,
-    http_mode: &HttpMode,
+    http_mode: &impl CustomHttpMode,
     requests: &Requests,
 ) -> Result<(TcpStream, SocketAddr), ErrorCode> {
     let hosts = lookup_host(&authority)
