@@ -13,3 +13,10 @@ Cargo.lock
 
 # We compile our wasm module down to a ".bin" file
 *.bin
+*.wasm
+
+crates/sandbox/src/sandbox/
+crates/sandbox/src/tsutils/
+
+node_modules
+/sandbox/build/

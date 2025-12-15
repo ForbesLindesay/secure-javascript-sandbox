@@ -1,0 +1,4 @@
+{
+  "fib": "fib.js",
+  "fib-external": "http://localhost:3001/fib.js"
+}

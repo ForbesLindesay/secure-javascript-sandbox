@@ -1,14 +1,13 @@
 [package]
-name = "secure_js_sandbox_server"
+name = "secure_js_sandbox_axum_handler"
 version = "0.1.0"
 edition = "2024"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.7"
-secure_js_sandbox_axum_handler = { version = "0.1.0" }
+secure_js_sandbox = { version = "0.1.0" }
+secure_js_sandbox_ts_utils = { version = "0.1.0" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145" }
 tokio = { version = "1", features = ["full"] }
