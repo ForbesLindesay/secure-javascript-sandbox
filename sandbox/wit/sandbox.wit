@@ -3,6 +3,10 @@ package local:sandbox;
 world sandbox {
   import local:host/host-impl;
   import local:ts-utils/ts-utils-impl;
-  export evaluate-module: func(code: string, method: string, args: list<string>, strip-types: bool);
-  export evaluate: func(code: string, args: list<string>, stip-types: bool);
+  record sandbox-options {
+    strip-types: bool,
+    filename: option<string>,
+  }
+  export evaluate-module: func(code: string, method: string, args: list<string>, options: sandbox-options);
+  export evaluate: func(code: string, args: list<string>, options: sandbox-options);
 }

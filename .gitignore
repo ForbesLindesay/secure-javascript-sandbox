@@ -17,3 +17,6 @@ Cargo.lock
 
 crates/sandbox/src/sandbox/
 crates/sandbox/src/tsutils/
+
+node_modules
+/sandbox/build/

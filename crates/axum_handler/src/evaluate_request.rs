@@ -7,6 +7,7 @@ use crate::SandboxServerMemoryLimits;
 pub struct EvaluateRequest {
     pub code: String,
     pub parameters: Vec<serde_json::Value>,
+    pub filename: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -42,6 +43,7 @@ impl Default for SandboxServerRequestConfig {
 pub struct EvaluateRequestWithConfig {
     pub code: String,
     pub parameters: Vec<serde_json::Value>,
+    pub filename: Option<String>,
     #[serde(default)]
     pub config: SandboxServerRequestConfig,
 }

@@ -19,7 +19,7 @@ pub use limit_values::{
 pub use memory::MemoryLimits;
 pub use sandbox::{EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine};
 pub use tsutils::{
-    ModuleExport, StaticImport, StaticImportUsage, TsUtilsEngine, TsUtilsEvaluateError,
+    ModuleExport, StaticImport, TsUtilsEngine, TsUtilsEvaluateError,
     TsUtilsSandboxConfig, TsUtilsSandboxInstance, ValidateModuleMode,
 };
 pub use wasmtime::{StoreLimits, StoreLimitsBuilder};

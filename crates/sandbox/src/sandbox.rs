@@ -43,6 +43,7 @@ pub struct SandboxConfig<
     pub mode: EvaluateMode,
     /// Whether to strip TypeScript type annotations from the code before evaluating - if it's a module, only the initial module has types stripped.
     pub strip_typescript_types: bool,
+    pub filename: Option<String>,
 }
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -54,6 +55,7 @@ impl Default for SandboxConfig {
             request_limit: Default::default(),
             mode: Default::default(),
             strip_typescript_types: false,
+            filename: None,
         }
     }
 }
@@ -166,6 +168,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
                         &EvaluateOptions {
                             mode: config.mode,
                             strip_typescript_types: config.strip_typescript_types,
+                            filename: config.filename,
                         },
                     )
                     .await
@@ -195,7 +198,21 @@ impl fmt::Display for EvaluateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             EvaluateError::FuelExhausted => write!(f, "CPU fuel exhausted"),
-            EvaluateError::JavaScriptError(msg) => write!(f, "JavaScript error: {}", msg),
+            EvaluateError::JavaScriptError(msg) => {
+                write!(f, "JavaScript error: ")?;
+                let mut first = true;
+                for line in msg.lines() {
+                    if !line.contains("sandbox-host-code.js:") && !line.contains("sources/initializer.js:"){
+                        if first {
+                            first = false;
+                        } else {
+                            write!(f, "\n  ")?;
+                        }
+                        write!(f, "{}", line)?;
+                    }
+                }
+                Ok(())
+            },
             EvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
             EvaluateError::JsonError(err) => write!(f, "JSON error: {}", err),
         }
@@ -292,7 +309,10 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                         &mut self.store,
                         &code,
                         &parameters,
-                        options.strip_typescript_types,
+                        &bindings::SandboxOptions {
+                            strip_types: options.strip_typescript_types,
+                            filename: options.filename.clone(),
+                        }
                     )
                     .await
             }
@@ -303,7 +323,10 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                         &code,
                         &method,
                         &parameters,
-                        options.strip_typescript_types,
+                        &bindings::SandboxOptions {
+                            strip_types: options.strip_typescript_types,
+                            filename: options.filename.clone(),
+                        }
                     )
                     .await
             }
@@ -344,6 +367,7 @@ fn take_memory_pipe_contents(pipe: MemoryOutputPipe) -> String {
 struct EvaluateOptions {
     pub mode: EvaluateMode,
     pub strip_typescript_types: bool,
+    pub filename: Option<String>,
 }
 
 impl Default for EvaluateOptions {
@@ -351,6 +375,7 @@ impl Default for EvaluateOptions {
         Self {
             mode: EvaluateMode::FunctionCall,
             strip_typescript_types: false,
+            filename: None,
         }
     }
 }

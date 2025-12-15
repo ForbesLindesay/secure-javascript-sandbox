@@ -185,6 +185,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
                     None => EvaluateMode::FunctionCall,
                 },
                 strip_typescript_types: self.sandbox_auto_strip_types,
+                filename: request.filename,
             },
         }
     }
@@ -230,6 +231,7 @@ impl<TImportMap: CustomImportMap + Clone>
                     None => EvaluateMode::FunctionCall,
                 },
                 strip_typescript_types: request.config.sandbox_auto_strip_types,
+                filename: request.filename,
             },
         }
     }

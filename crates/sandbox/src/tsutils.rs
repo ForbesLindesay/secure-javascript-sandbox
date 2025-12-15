@@ -19,7 +19,7 @@ mod bindings {
     });
 }
 pub use bindings::exports::local::ts_utils::ts_utils_impl::{
-    ModuleExport, StaticImport, StaticImportUsage,
+    ModuleExport, StaticImport,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -148,14 +148,14 @@ impl fmt::Display for TsUtilsEvaluateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TsUtilsEvaluateError::FuelExhausted => write!(f, "CPU fuel exhausted"),
-            TsUtilsEvaluateError::JavaScriptError(msg) => write!(f, "JavaScript Error: {}", msg),
+            TsUtilsEvaluateError::JavaScriptError(msg) => write!(f, "{}", msg),
             TsUtilsEvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
         }
     }
 }
 impl From<String> for TsUtilsEvaluateError {
     fn from(msg: String) -> Self {
-        TsUtilsEvaluateError::JavaScriptError(msg)
+        TsUtilsEvaluateError::JavaScriptError(msg.trim_ascii().into())
     }
 }
 impl From<wasmtime::Error> for TsUtilsEvaluateError {
@@ -175,11 +175,11 @@ impl TsUtilsSandboxInstance {
     pub fn get_fuel_remaining(&self) -> u64 {
         self.store.get_fuel().unwrap_or(0)
     }
-    pub async fn strip_types(&mut self, code: &str) -> Result<String, TsUtilsEvaluateError> {
+    pub async fn strip_types(&mut self, code: &str, filename: Option<&str>) -> Result<String, TsUtilsEvaluateError> {
         let result = self
             .sandbox
             .local_ts_utils_ts_utils_impl()
-            .call_strip_types(&mut self.store, code)
+            .call_strip_types(&mut self.store, code, filename)
             .await;
         if result.is_err() && self.store.get_fuel().unwrap_or(0) == 0 {
             return Err(TsUtilsEvaluateError::FuelExhausted);
@@ -191,15 +191,16 @@ impl TsUtilsSandboxInstance {
         &mut self,
         code: &str,
         mode: ValidateModuleMode,
+        filename: Option<&str>,
     ) -> Result<ValidateModuleResult, TsUtilsEvaluateError> {
         let sandbox = self.sandbox.local_ts_utils_ts_utils_impl();
         let result = match mode {
             ValidateModuleMode::JavaScript => {
-                sandbox.call_compile_module(&mut self.store, code).await
+                sandbox.call_compile_module(&mut self.store, code, filename).await
             }
             ValidateModuleMode::TypeScript => {
                 sandbox
-                    .call_strip_types_and_compile_module(&mut self.store, code)
+                    .call_strip_types_and_compile_module(&mut self.store, code, filename)
                     .await
             }
         };

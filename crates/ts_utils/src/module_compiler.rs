@@ -1,10 +1,10 @@
 use crate::{
-    implementation::{CompiledModule, ModuleExport, StaticImport, StaticImportUsage},
-    module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement},
+    implementation::{CompiledModule, ModuleExport, StaticImport},
+    module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement}, str_handler::StringHandlerOutput,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
-use swc_common::{FileName, SourceMap, comments::SingleThreadedComments, errors::Handler};
+use swc_common::{FileName, SourceMap, comments::SingleThreadedComments};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 use swc_ecma_visit::VisitWith;
@@ -19,11 +19,14 @@ use swc_ecma_visit::VisitWith;
 /// Static imports and a dynamic import function may need to be passed as
 /// arguments to the resulting function. The returned object represents
 /// the exports of the module.
-pub fn compile_module(input: String) -> Result<CompiledModule> {
+pub fn compile_module(input: String, filename: Option<String>) -> Result<CompiledModule> {
     let cm = Arc::<SourceMap>::default();
-    let handler = Handler::with_emitter_writer(Box::new(std::io::stderr()), Some(cm.clone()));
+    let (handler, handler_output) = StringHandlerOutput::new(Some(cm.clone()));
 
-    let fm = cm.new_source_file(Arc::new(FileName::Anon), input);
+    let fm = cm.new_source_file(Arc::new(match filename {
+        Some(name) => FileName::Custom(name),
+        None => FileName::Anon,
+    }), input);
     let comments = SingleThreadedComments::default();
 
     let lexer = Lexer::new(
@@ -38,9 +41,13 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         .parse_module()
         .map_err(|e| {
             e.into_diagnostic(&handler).emit();
-            anyhow::anyhow!("failed to parse module")
-        })
-        .context("failed to parse module")?;
+            let err_output = handler_output.into_string();
+            if !err_output.is_empty() {
+                anyhow::anyhow!(err_output)
+            } else {
+                anyhow::anyhow!("failed to parse module")
+            }
+        })?;
 
     let mut identifiers = IdentifierVisitor::new();
     module.visit_with(&mut identifiers);
@@ -147,14 +154,16 @@ pub fn compile_module(input: String) -> Result<CompiledModule> {
         };
         static_imports.push(StaticImport {
             source: src.to_string(),
-            usage: match import.pattern {
-                ModuleInputPattern::Ident(_) => StaticImportUsage::Star,
-                ModuleInputPattern::ObjectPat(items) => StaticImportUsage::Named(
-                    items
-                        .into_iter()
-                        .map(|item| format!("{}", item.0))
-                        .collect(),
-                ),
+            names: match &import.pattern {
+                ModuleInputPattern::Ident(_) => vec![],
+                ModuleInputPattern::ObjectPat(items) => items
+                    .iter()
+                    .map(|item| format!("{}", item.0))
+                    .collect(),
+            },
+            star: match &import.pattern {
+                ModuleInputPattern::Ident(_) => true,
+                ModuleInputPattern::ObjectPat(_) => false,
             },
         });
     }
@@ -218,7 +227,7 @@ mod tests {
                 return 4;
             }
         "#;
-        let res = compile_module(src.to_string()).unwrap();
+        let res = compile_module(src.to_string(), None).unwrap();
         println!("Result: {}", res.code);
         let mut arguments: Vec<String> = Vec::new();
         if res.has_dynamic_import {

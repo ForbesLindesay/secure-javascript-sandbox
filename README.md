@@ -6,10 +6,10 @@ Secure sandbox for JavaScript plugins using Rust and Web Assembly.
 
 This sandbox consists of the following components:
 
- - `wasm-sandbox` is a JavaScript component compiled to WASM using [ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS), which embeds the Mozilla SpiderMonkey JavaScript engine inside the WebAssembly component.
- - `crates/sandbox` provides the code to load this WebAssembly component and send it a JavaScript function to run and some JSON serialized parameters. It limits the "fuel" (approximately CPU cycles) and memory used by the WebAssembly component, and exposes only a few select APIs to the WebAssembly component to ensure it only has access to call the URLs you choose.
- - `crates/axum_handler` provides helpers for defining a web endpoint for the axum Rust web server framework.
- - `crates/server` provides a ready to use server that can be configured via environment variables.
+- `wasm-sandbox` is a JavaScript component compiled to WASM using [ComponentizeJS](https://github.com/bytecodealliance/ComponentizeJS), which embeds the Mozilla SpiderMonkey JavaScript engine inside the WebAssembly component.
+- `crates/sandbox` provides the code to load this WebAssembly component and send it a JavaScript function to run and some JSON serialized parameters. It limits the "fuel" (approximately CPU cycles) and memory used by the WebAssembly component, and exposes only a few select APIs to the WebAssembly component to ensure it only has access to call the URLs you choose.
+- `crates/axum_handler` provides helpers for defining a web endpoint for the axum Rust web server framework.
+- `crates/server` provides a ready to use server that can be configured via environment variables.
 
 ## Usage
 
@@ -84,7 +84,7 @@ SANDBOX_MODULE_METHOD=NULL
 SANDBOX_IMPORT_MAP_PATH=NULL
 
 # Whether to expose a /strip_types endpoint to remove TypeScript
-# annotations from JavaScript, 
+# annotations from JavaScript,
 SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT="false"
 
 # These settings are equivalent to the SANDBOX_ variants above, but apply
@@ -100,10 +100,10 @@ TS_UTILS_MAX_MEMORIES=TS_UTILS_MAX_MEMORIES
 
 There are 4 possible values for `SANDBOX_HTTP_MODE`
 
-* `ALLOW_ALL` - allows all outbound requests without any restrictions.
-* `ALLOW_GLOBAL_IP_ONLY` - allows outbound requests only if the target is an IP address that's considered "Global".
-* `ALLOW_LIST_HOSTS:{hosts,}*` - allows outbound requests only to the specified list of host names. e.g. `ALLOW_LIST_HOSTS:example.com,example.org` would allow fetch requests to `example.com` and `example.org` but not to `example.net`.
-* `BLOCK_ALL` - blocks all outbound requests.
+- `ALLOW_ALL` - allows all outbound requests without any restrictions.
+- `ALLOW_GLOBAL_IP_ONLY` - allows outbound requests only if the target is an IP address that's considered "Global".
+- `ALLOW_LIST_HOSTS:{hosts,}*` - allows outbound requests only to the specified list of host names. e.g. `ALLOW_LIST_HOSTS:example.com,example.org` would allow fetch requests to `example.com` and `example.org` but not to `example.net`.
+- `BLOCK_ALL` - blocks all outbound requests.
 
 ### API
 
@@ -122,13 +122,17 @@ Request:
 ```typescript
 interface EvaluateRequest {
   /**
+   * An optional filename for stack traces and error messages
+   */
+  filename?: string | null;
+  /**
    * If in function mode:
-   * 
+   *
    * A function expression to be evaluated. The function can be async, allowing for the use
    * of `fetch` and things like timers.
-   * 
+   *
    * If in module mode:
-   * 
+   *
    * An ESModule exporting a function with the expected name. The function can be async.
    */
   code: string;
@@ -162,7 +166,7 @@ interface EvaluateResponse {
     outcome: "ALLOWED" | "BLOCKED";
     uri: string;
     socket_addr: string | null;
-  }[]
+  }[];
 }
 ```
 
@@ -180,6 +184,10 @@ Request:
 
 ```typescript
 interface StripTypesRequest {
+  /**
+   * An optional filename for error messages
+   */
+  filename?: string | null;
   /**
    * The TypeScript code to remove type annotations from.
    */
@@ -221,6 +229,10 @@ Request:
 ```typescript
 interface ValidateModuleRequest {
   /**
+   * An optional filename for error messages
+   */
+  filename?: string | null;
+  /**
    * The ESModule code to validate
    */
   code: string;
@@ -228,7 +240,7 @@ interface ValidateModuleRequest {
    * Whether to strip types before validating the module.
    * Defaults to "JAVASCRIPT", which does not strip types.
    */
-  mode: "JAVASCRIPT" | "TYPESCRIPT";
+  mode?: "JAVASCRIPT" | "TYPESCRIPT";
 }
 ```
 
@@ -246,17 +258,16 @@ interface ValidateModuleResponse_Success {
    * A list of URLs that are imported statically via
    * import {specifiers} from "source"
    */
-  static_imports: string[];
+  static_imports: {
+    source: string;
+    imported_names: string[];
+    has_star_import: boolean;
+  }[];
   /**
    * A list of exports. If there is a default export, the
    * string "default" will appear in this list.
    */
-  named_exports: string[];
-  /**
-   * A list of URLs that are re-exported via
-   * export * from "source"
-   */
-  star_exports: string[];
+  exports: ({ type: "NAMED"; name: string } | { type: "STAR"; source: string })[];
 }
 interface ValidateModuleResponse_Error {
   success: false;
@@ -295,11 +306,5 @@ docker buildx create \
   --name container \
   --driver=docker-container
 
-cd sandbox && npm install && node --run build -- --release && cd .. && \
-docker buildx build \
-  --tag forbeslindesay/secure-js-sandbox:latest \
-  --tag forbeslindesay/secure-js-sandbox:v{{VERSION}} \
-  --platform linux/arm64,linux/amd64 \
-  --builder container \
-  --push .
+node --run release
 ```

@@ -15,6 +15,7 @@ use crate::{SandboxServerConfig, get_env};
 #[derive(Deserialize)]
 pub struct StripTypesRequest {
     pub code: String,
+    pub filename: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -22,6 +23,7 @@ pub struct ValidateModuleRequest {
     pub code: String,
     #[serde(default)]
     pub mode: ValidateModuleMode,
+    pub filename: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -39,15 +41,10 @@ pub struct ValidateModuleResponseSuccess {
 }
 
 #[derive(Serialize)]
-#[serde(tag = "type")]
-pub enum StaticImport {
-    NAMED {
-        source: String,
-        imported_names: Vec<String>,
-    },
-    STAR {
-        source: String,
-    },
+pub struct StaticImport {
+    source: String,
+    imported_names: Vec<String>,
+    has_star_import: bool,
 }
 
 #[derive(Serialize)]
@@ -129,7 +126,7 @@ pub async fn strip_types(
     request: StripTypesRequest,
 ) -> StripTypesResponse {
     let result = match handler.build().await {
-        Ok(mut sandbox) => sandbox.strip_types(&request.code).await,
+        Ok(mut sandbox) => sandbox.strip_types(&request.code, request.filename.as_deref()).await,
         Err(err) => Err(err),
     };
     match result {
@@ -160,7 +157,7 @@ pub async fn validate_module(
     request: ValidateModuleRequest,
 ) -> ValidateModuleResponse {
     let result = match handler.build().await {
-        Ok(mut sandbox) => sandbox.validate_module(&request.code, request.mode).await,
+        Ok(mut sandbox) => sandbox.validate_module(&request.code, request.mode, request.filename.as_deref()).await,
         Err(err) => Err(err),
     };
     match result {
@@ -170,17 +167,13 @@ pub async fn validate_module(
             static_imports: result
                 .static_imports
                 .into_iter()
-                .map(|import| match import.usage {
-                    secure_js_sandbox::StaticImportUsage::Named(imported_names) => {
-                        StaticImport::NAMED {
-                            source: import.source,
-                            imported_names,
-                        }
-                    }
-                    secure_js_sandbox::StaticImportUsage::Star => StaticImport::STAR {
+                .map(|import| 
+                    StaticImport {
                         source: import.source,
-                    },
-                })
+                        imported_names: import.names,
+                        has_star_import: import.star,
+                    }
+                )
                 .collect(),
             exports: result
                 .exports

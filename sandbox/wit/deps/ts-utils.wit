@@ -1,13 +1,10 @@
 package local:ts-utils;
 
 interface ts-utils-impl {
-  variant static-import-usage {
-    named(list<string>),
-    star,
-  }
   record static-import {
     source: string,
-    usage: static-import-usage,
+    names: list<string>,
+    star: bool,
   }
   // In JS these look like {"tag":"named","val":"some_string"}
   variant module-export {
@@ -22,9 +19,9 @@ interface ts-utils-impl {
   }
 
 
-  strip-types: func(script: string) -> result<string, string>;
-  compile-module: func(script: string) -> result<compiled-module, string>;
-  strip-types-and-compile-module: func(script: string) -> result<compiled-module, string>;
+  strip-types: func(script: string, filename: option<string>) -> result<string, string>;
+  compile-module: func(script: string, filename: option<string>) -> result<compiled-module, string>;
+  strip-types-and-compile-module: func(script: string, filename: option<string>) -> result<compiled-module, string>;
 }
 
 world ts-utils {
