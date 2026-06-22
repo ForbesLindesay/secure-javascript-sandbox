@@ -13,6 +13,8 @@ mod signal;
 
 #[tokio::main]
 pub async fn main() -> anyhow::Result<()> {
+    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install default TLS provider");
+
     let main = start_server();
     let signal_listener = signal::listen_signal();
     tokio::select! {

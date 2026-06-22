@@ -8,6 +8,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 axum = "0.8.7"
+rustls = "0.23.35"
 secure_js_sandbox_axum_handler = { version = "0.1.0" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145" }
