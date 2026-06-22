@@ -1,22 +1,20 @@
 use std::collections::HashSet;
-use std::error::Error;
 use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use http_body_util::BodyExt;
-use hyper::body::Body;
-use hyper::header::HeaderValue;
-use hyper::{HeaderMap, header};
+use hyper::HeaderMap;
+use hyper::header::{self, HeaderValue};
 use hyper::{Method, Uri};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
-use wasmtime_wasi_http::bindings::http::types::{DnsErrorPayload, ErrorCode};
-use wasmtime_wasi_http::hyper_request_error;
 use wasmtime_wasi_http::io::TokioIo;
-use wasmtime_wasi_http::types::{IncomingResponse, OutgoingRequestConfig};
+use wasmtime_wasi_http::p2::bindings::http::types::{DnsErrorPayload, ErrorCode};
+use wasmtime_wasi_http::p2::hyper_request_error;
+use wasmtime_wasi_http::p2::types::{IncomingResponse, OutgoingRequestConfig};
 
 use crate::ip_utils::IpUtils;
 
@@ -189,16 +187,17 @@ impl CustomHttpMode for HttpMode {
 // Based on use wasmtime_wasi_http::types::default_send_request_handler;
 // but extracted to allow hooking in our own logic for allowing/blocking requests
 // and to handle redirects.
-pub(crate) async fn send_request_handler<T: Body + Default + Send + 'static>(
-    request: hyper::Request<T>,
-    config: OutgoingRequestConfig,
+pub(crate) async fn send_request_handler(
+    request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
+    OutgoingRequestConfig {
+        use_tls,
+        connect_timeout,
+        first_byte_timeout,
+        between_bytes_timeout,
+    }: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
     http_mode: &impl CustomHttpMode,
     requests: Requests,
-) -> Result<IncomingResponse, ErrorCode>
-where
-    T::Data: Send,
-    T::Error: Into<Box<dyn Error + Send + Sync + 'static>>,
-{
+) -> Result<wasmtime_wasi_http::p2::types::IncomingResponse, ErrorCode> {
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
     while let Some(request) = next_request {
@@ -216,12 +215,7 @@ where
             ));
             return Err(ErrorCode::DestinationNotFound);
         }
-        let OutgoingRequestConfig {
-            use_tls,
-            connect_timeout,
-            first_byte_timeout,
-            between_bytes_timeout,
-        } = config;
+
         let authority: String = if let Some(authority) = request.uri().authority() {
             if authority.port().is_some() {
                 authority.to_string()
@@ -232,6 +226,13 @@ where
         } else {
             return Err(ErrorCode::HttpRequestUriInvalid);
         };
+
+        if let Ok(value) = header::HeaderValue::from_str(&authority) {
+            request.headers_mut().insert(header::HOST, value);
+        } else {
+            return Err(ErrorCode::HttpRequestUriInvalid);
+        }
+
         let (tcp_stream, socket_addr) = timeout(
             connect_timeout,
             get_tcp_stream(request.uri(), &authority, http_mode, &requests),
@@ -309,6 +310,10 @@ where
 
             (sender, worker)
         };
+
+        // at this point, the request contains the scheme and the authority, but
+        // the http packet should only include those if addressing a proxy, so
+        // remove them here, since SendRequest::send_request does not do it for us
         *request.uri_mut() = Uri::builder()
             .path_and_query(
                 request
@@ -319,18 +324,18 @@ where
             )
             .build()
             .expect("comes from valid request");
+
         let resp = timeout(first_byte_timeout, sender.send_request(request))
             .await
             .map_err(|_| ErrorCode::ConnectionReadTimeout)?
             .map_err(hyper_request_error)?
-            .map(|body| body.map_err(hyper_request_error).boxed());
+            .map(|body| body.map_err(hyper_request_error).boxed_unsync());
 
         if is_redirect_status(resp.status()) {
             if redirect_count >= 20 {
                 return Err(ErrorCode::LoopDetected);
             }
-            let mut request: hyper::Request<T> =
-                hyper::Request::from_parts(parts, Default::default());
+            let mut request = hyper::Request::from_parts(parts, Default::default());
             if request.method() != &Method::GET && request.method() != &Method::HEAD {
                 *request.method_mut() = Method::GET;
                 request.headers_mut().remove(header::CONTENT_ENCODING);
@@ -347,7 +352,6 @@ where
             next_request = Some(request);
             redirect_count += 1;
             continue;
-            // return send_request_handler(request, config, http_mode, redirect_count + 1).await;
         }
         return Ok(IncomingResponse {
             resp,

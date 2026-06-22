@@ -1,6 +1,7 @@
 use crate::{
     implementation::{CompiledModule, ModuleExport, StaticImport},
-    module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement}, str_handler::StringHandlerOutput,
+    module_visitor::{Export, IdentifierVisitor, ModuleInputPattern, ModuleVisitor, Replacement},
+    str_handler::StringHandlerOutput,
 };
 use anyhow::Result;
 use std::sync::Arc;
@@ -23,10 +24,13 @@ pub fn compile_module(input: String, filename: Option<String>) -> Result<Compile
     let cm = Arc::<SourceMap>::default();
     let (handler, handler_output) = StringHandlerOutput::new(Some(cm.clone()));
 
-    let fm = cm.new_source_file(Arc::new(match filename {
-        Some(name) => FileName::Custom(name),
-        None => FileName::Anon,
-    }), input);
+    let fm = cm.new_source_file(
+        Arc::new(match filename {
+            Some(name) => FileName::Custom(name),
+            None => FileName::Anon,
+        }),
+        input,
+    );
     let comments = SingleThreadedComments::default();
 
     let lexer = Lexer::new(
@@ -37,17 +41,15 @@ pub fn compile_module(input: String, filename: Option<String>) -> Result<Compile
     );
 
     let mut parser = Parser::new_from(lexer);
-    let module = parser
-        .parse_module()
-        .map_err(|e| {
-            e.into_diagnostic(&handler).emit();
-            let err_output = handler_output.into_string();
-            if !err_output.is_empty() {
-                anyhow::anyhow!(err_output)
-            } else {
-                anyhow::anyhow!("failed to parse module")
-            }
-        })?;
+    let module = parser.parse_module().map_err(|e| {
+        e.into_diagnostic(&handler).emit();
+        let err_output = handler_output.into_string();
+        if !err_output.is_empty() {
+            anyhow::anyhow!(err_output)
+        } else {
+            anyhow::anyhow!("failed to parse module")
+        }
+    })?;
 
     let mut identifiers = IdentifierVisitor::new();
     module.visit_with(&mut identifiers);
@@ -156,10 +158,9 @@ pub fn compile_module(input: String, filename: Option<String>) -> Result<Compile
             source: src.to_string(),
             names: match &import.pattern {
                 ModuleInputPattern::Ident(_) => vec![],
-                ModuleInputPattern::ObjectPat(items) => items
-                    .iter()
-                    .map(|item| format!("{}", item.0))
-                    .collect(),
+                ModuleInputPattern::ObjectPat(items) => {
+                    items.iter().map(|item| format!("{}", item.0)).collect()
+                }
             },
             star: match &import.pattern {
                 ModuleInputPattern::Ident(_) => true,

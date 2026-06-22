@@ -1,9 +1,12 @@
 use wasmtime::ResourceLimiter;
 use wasmtime::component::HasData;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
-use wasmtime_wasi_http::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::types::HostFutureIncomingResponse;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::p2::types::HostFutureIncomingResponse;
+use wasmtime_wasi_http::{
+    WasiHttpCtx,
+    p2::{WasiHttpCtxView, WasiHttpHooks, WasiHttpView},
+};
 
 use crate::http::{Requests, send_request_handler};
 use crate::memory::MemoryLimits;
@@ -17,13 +20,10 @@ pub(crate) struct SandboxState<TImportMap: CustomImportMap, THttpMode: CustomHtt
     pub resource_table: ResourceTable,
     pub memory_limits: MemoryLimits,
     pub wasi_http: WasiHttpCtx,
-    pub http: THttpMode,
+    pub http: SandboxHttpState<THttpMode>,
     pub imports: TImportMap,
-    pub request_limit: RequestLimit,
     pub max_requested_memory_bytes: Option<usize>,
     pub max_requested_table_elements: Option<usize>,
-    pub requests: Requests,
-    pub request_count: usize,
 }
 
 impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiView
@@ -40,17 +40,27 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiView
 impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiHttpView
     for SandboxState<TImportMap, THttpMode>
 {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.wasi_http
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.wasi_http,
+            table: &mut self.resource_table,
+            hooks: &mut self.http,
+        }
     }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.resource_table
-    }
+}
+pub(crate) struct SandboxHttpState<THttpMode: CustomHttpMode> {
+    pub request_count: usize,
+    pub requests: Requests,
+    pub request_limit: RequestLimit,
+    pub http: THttpMode,
+}
+impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
     fn send_request(
         &mut self,
-        request: hyper::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
+        request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
+        config: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
+    ) -> wasmtime_wasi_http::p2::HttpResult<wasmtime_wasi_http::p2::types::HostFutureIncomingResponse>
+    {
         self.request_count = self.request_count.saturating_add(1);
         if let RequestLimit::Limited(max) = self.request_limit {
             if self.request_count > max {
@@ -82,7 +92,7 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
         _current: usize,
         desired: usize,
         maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         self.max_requested_memory_bytes = match self.max_requested_memory_bytes {
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
@@ -95,13 +105,13 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
             },
         };
         if !allow && self.memory_limits.trap_on_grow_failure {
-            anyhow::bail!("forcing trap when growing memory to {desired} bytes")
+            wasmtime::bail!("forcing trap when growing memory to {desired} bytes")
         } else {
             Ok(allow)
         }
     }
 
-    fn memory_grow_failed(&mut self, error: anyhow::Error) -> anyhow::Result<()> {
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
         if self.memory_limits.trap_on_grow_failure {
             Err(error.context("forcing a memory growth failure to be a trap"))
         } else {
@@ -115,7 +125,7 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
         _current: usize,
         desired: usize,
         maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         self.max_requested_table_elements = match self.max_requested_table_elements {
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
@@ -128,13 +138,13 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
             },
         };
         if !allow && self.memory_limits.trap_on_grow_failure {
-            anyhow::bail!("forcing trap when growing table to {desired} elements")
+            wasmtime::bail!("forcing trap when growing table to {desired} elements")
         } else {
             Ok(allow)
         }
     }
 
-    fn table_grow_failed(&mut self, error: anyhow::Error) -> anyhow::Result<()> {
+    fn table_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
         if self.memory_limits.trap_on_grow_failure {
             Err(error.context("forcing a table growth failure to be a trap"))
         } else {

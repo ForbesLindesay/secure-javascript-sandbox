@@ -5,7 +5,7 @@ use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
-use crate::state::SandboxState;
+use crate::state::{SandboxHttpState, SandboxState};
 use crate::{
     CpuFuel, CustomHttpMode, CustomImportMap, HttpMode, ImportMap, MemoryLimits, RequestLimit,
 };
@@ -75,7 +75,6 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         // engine_config.cache_config_load_default().unwrap();
         // engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
         engine_config.consume_fuel(true);
-        engine_config.async_support(true);
 
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
@@ -87,7 +86,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         // on the store. We are enabling the APIs needed for Date.now() and Math.random()
         // to work from within JavaScript.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         bindings::local::host::host_impl::add_to_linker::<
             SandboxState<TImportMap, THttpMode>,
             SandboxState<TImportMap, THttpMode>,
@@ -110,7 +109,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         http: THttpMode,
         imports: TImportMap,
         request_limit: RequestLimit,
-    ) -> anyhow::Result<SandboxInstance<THttpMode, TImportMap>> {
+    ) -> wasmtime::Result<SandboxInstance<THttpMode, TImportMap>> {
         let stdout = MemoryOutputPipe::new(memory_limits.stdout_bytes.into());
         let stderr = MemoryOutputPipe::new(memory_limits.stderr_bytes.into());
         let ctx: WasiCtx = WasiCtx::builder()
@@ -124,13 +123,15 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
                 wasi_http: WasiHttpCtx::new(),
                 resource_table: ResourceTable::default(),
                 memory_limits,
-                http,
+                http: SandboxHttpState {
+                    http,
+                    request_limit,
+                    requests: Default::default(),
+                    request_count: 0,
+                },
                 imports,
-                request_limit,
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
-                requests: Default::default(),
-                request_count: 0,
             },
         );
         store.limiter(|s| s);
@@ -202,7 +203,9 @@ impl fmt::Display for EvaluateError {
                 write!(f, "JavaScript error: ")?;
                 let mut first = true;
                 for line in msg.lines() {
-                    if !line.contains("sandbox-host-code.js:") && !line.contains("sources/initializer.js:"){
+                    if !line.contains("sandbox-host-code.js:")
+                        && !line.contains("sources/initializer.js:")
+                    {
                         if first {
                             first = false;
                         } else {
@@ -212,7 +215,7 @@ impl fmt::Display for EvaluateError {
                     }
                 }
                 Ok(())
-            },
+            }
             EvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
             EvaluateError::JsonError(err) => write!(f, "JSON error: {}", err),
         }
@@ -243,7 +246,7 @@ struct SandboxInstance<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> {
 impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
     SandboxInstance<THttpMode, TImportMap>
 {
-    fn handle_result(self, result: Result<(), anyhow::Error>) -> SandboxEvaluationResult {
+    fn handle_result(self, result: Result<(), wasmtime::Error>) -> SandboxEvaluationResult {
         let full_stdout = take_memory_pipe_contents(self.stdout);
         let full_stderr = take_memory_pipe_contents(self.stderr);
         let mut stdout = full_stdout.split("73914D86-55DF-495D-BAD5-B45D571D154D");
@@ -279,7 +282,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
             fuel_remaining: self.store.get_fuel().unwrap_or(0),
             max_requested_memory_bytes: self.store.data().max_requested_memory_bytes,
             max_requested_table_elements: self.store.data().max_requested_table_elements,
-            outbound_requests: self.store.data().requests.take(),
+            outbound_requests: self.store.data().http.requests.take(),
         }
     }
     pub async fn evaluate(
@@ -298,7 +301,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                     fuel_remaining: self.store.get_fuel().unwrap_or(0),
                     max_requested_memory_bytes: self.store.data().max_requested_memory_bytes,
                     max_requested_table_elements: self.store.data().max_requested_table_elements,
-                    outbound_requests: self.store.data().requests.take(),
+                    outbound_requests: self.store.data().http.requests.take(),
                 };
             }
         };
@@ -312,7 +315,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
                             filename: options.filename.clone(),
-                        }
+                        },
                     )
                     .await
             }
@@ -326,7 +329,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
                             filename: options.filename.clone(),
-                        }
+                        },
                     )
                     .await
             }

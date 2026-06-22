@@ -126,7 +126,11 @@ pub async fn strip_types(
     request: StripTypesRequest,
 ) -> StripTypesResponse {
     let result = match handler.build().await {
-        Ok(mut sandbox) => sandbox.strip_types(&request.code, request.filename.as_deref()).await,
+        Ok(mut sandbox) => {
+            sandbox
+                .strip_types(&request.code, request.filename.as_deref())
+                .await
+        }
         Err(err) => Err(err),
     };
     match result {
@@ -157,7 +161,11 @@ pub async fn validate_module(
     request: ValidateModuleRequest,
 ) -> ValidateModuleResponse {
     let result = match handler.build().await {
-        Ok(mut sandbox) => sandbox.validate_module(&request.code, request.mode, request.filename.as_deref()).await,
+        Ok(mut sandbox) => {
+            sandbox
+                .validate_module(&request.code, request.mode, request.filename.as_deref())
+                .await
+        }
         Err(err) => Err(err),
     };
     match result {
@@ -167,13 +175,11 @@ pub async fn validate_module(
             static_imports: result
                 .static_imports
                 .into_iter()
-                .map(|import| 
-                    StaticImport {
-                        source: import.source,
-                        imported_names: import.names,
-                        has_star_import: import.star,
-                    }
-                )
+                .map(|import| StaticImport {
+                    source: import.source,
+                    imported_names: import.names,
+                    has_star_import: import.star,
+                })
                 .collect(),
             exports: result
                 .exports

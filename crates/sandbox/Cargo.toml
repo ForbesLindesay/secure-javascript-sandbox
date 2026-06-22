@@ -10,7 +10,7 @@ crate-type = ["lib"]
 
 [build-dependencies]
 anyhow = "1.0.100"
-wasmtime = { version = "38.0.4", features = ['component-model'] }
+wasmtime = { version = "45.0.2", features = ["component-model"] }
 
 [dependencies]
 anyhow = "1.0.100"
@@ -23,9 +23,9 @@ serde_json = { version = "1.0.145" }
 tokio = { version = "1.38.0", features = ["full"] }
 tokio-rustls = "0.26.4"
 tracing = "0.1.41"
-wasmtime = "38.0.4"
-wasmtime-wasi = "38.0.4"
-wasmtime-wasi-http = "38.0.4"
+wasmtime = "45.0.2"
+wasmtime-wasi = "45.0.2"
+wasmtime-wasi-http = "45.0.2"
 webpki-roots = "1.0.4"
 
 [features]

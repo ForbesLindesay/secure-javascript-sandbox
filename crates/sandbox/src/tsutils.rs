@@ -7,7 +7,7 @@ use wasmtime_wasi_http::WasiHttpCtx;
 
 use crate::http::BlockAllHttp;
 use crate::imports::ImportMapBlockAll;
-use crate::state::SandboxState;
+use crate::state::{SandboxHttpState, SandboxState};
 use crate::{CpuFuel, MemoryLimits};
 
 mod bindings {
@@ -18,9 +18,7 @@ mod bindings {
         }
     });
 }
-pub use bindings::exports::local::ts_utils::ts_utils_impl::{
-    ModuleExport, StaticImport,
-};
+pub use bindings::exports::local::ts_utils::ts_utils_impl::{ModuleExport, StaticImport};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValidateModuleMode {
@@ -83,7 +81,6 @@ impl TsUtilsEngine {
         // engine_config.cache_config_load_default().unwrap();
         // engine_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
         engine_config.consume_fuel(true);
-        engine_config.async_support(true);
 
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
@@ -96,7 +93,7 @@ impl TsUtilsEngine {
         // on the store. We are enabling the APIs needed for Date.now() and Math.random()
         // to work from within JavaScript.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
 
         let component: Component =
             unsafe { Component::deserialize(&engine, include_bytes!("tsutils/tsutils.bin"))? };
@@ -111,7 +108,7 @@ impl TsUtilsEngine {
     pub async fn build(
         &self,
         config: TsUtilsSandboxConfig,
-    ) -> anyhow::Result<TsUtilsSandboxInstance> {
+    ) -> wasmtime::Result<TsUtilsSandboxInstance> {
         let ctx: WasiCtx = WasiCtx::builder().inherit_stderr().inherit_stdout().build();
         let mut store = Store::new(
             &self.engine,
@@ -120,13 +117,15 @@ impl TsUtilsEngine {
                 wasi_http: WasiHttpCtx::new(),
                 resource_table: ResourceTable::default(),
                 memory_limits: config.memory_limits,
-                http: BlockAllHttp,
+                http: SandboxHttpState {
+                    http: BlockAllHttp,
+                    request_limit: 0.into(),
+                    requests: Default::default(),
+                    request_count: 0,
+                },
                 imports: ImportMapBlockAll,
-                request_limit: 0.into(),
                 max_requested_memory_bytes: None,
                 max_requested_table_elements: None,
-                requests: Default::default(),
-                request_count: 0,
             },
         );
         store.limiter(|s| s);
@@ -175,7 +174,11 @@ impl TsUtilsSandboxInstance {
     pub fn get_fuel_remaining(&self) -> u64 {
         self.store.get_fuel().unwrap_or(0)
     }
-    pub async fn strip_types(&mut self, code: &str, filename: Option<&str>) -> Result<String, TsUtilsEvaluateError> {
+    pub async fn strip_types(
+        &mut self,
+        code: &str,
+        filename: Option<&str>,
+    ) -> Result<String, TsUtilsEvaluateError> {
         let result = self
             .sandbox
             .local_ts_utils_ts_utils_impl()
@@ -196,7 +199,9 @@ impl TsUtilsSandboxInstance {
         let sandbox = self.sandbox.local_ts_utils_ts_utils_impl();
         let result = match mode {
             ValidateModuleMode::JavaScript => {
-                sandbox.call_compile_module(&mut self.store, code, filename).await
+                sandbox
+                    .call_compile_module(&mut self.store, code, filename)
+                    .await
             }
             ValidateModuleMode::TypeScript => {
                 sandbox

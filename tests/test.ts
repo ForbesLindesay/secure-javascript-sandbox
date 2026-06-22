@@ -49,8 +49,13 @@ async function killPortUser(port: number) {
 }
 await killPortUser(3000);
 await killPortUser(3001);
+await killPortUser(3002);
 
 const server = createServer((req, res) => {
+  if (req.headers.host !== "127.0.0.1:3001") {
+    eq(req.headers.host, "localhost:3001");
+  }
+
   // console.log(req.method, req.url);
   if (req.url === "/fib.js") {
     res.writeHead(200, { "Content-Type": "text/javascript" });
@@ -64,10 +69,27 @@ const server = createServer((req, res) => {
     );
     return;
   }
+  if (req.url === "/to-redirect") {
+    res.writeHead(302, { Location: "http://localhost:3002/from-redirect" });
+    res.end("Redirecting");
+    return;
+  }
   res.writeHead(404);
   res.end("Not Found");
 });
 server.listen(3001);
+
+const redirectDestinationServer = createServer((req, res) => {
+  eq(req.headers.host, "localhost:3002");
+  if (req.url === "/from-redirect") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("from-redirect");
+    return;
+  }
+  res.writeHead(404);
+  res.end("Not Found");
+});
+redirectDestinationServer.listen(3002);
 
 const buildProc = spawn("cargo", [`build`], {
   stdio: "inherit",
@@ -372,6 +394,66 @@ await expectRun(
     stderr: "",
     stdout: "",
     success: false,
+  },
+);
+
+// Check we can follow redirects
+await expectRun(
+  {
+    code: `
+      export async function run() {
+        return await (await fetch('http://localhost:3001/to-redirect')).text()
+      }
+    `,
+    parameters: [],
+  },
+  {
+    outbound_requests: [
+      {
+        outcome: "ALLOWED",
+        socket_addr: "[::1]:3001",
+        uri: "http://localhost:3001/to-redirect",
+      },
+      {
+        outcome: "ALLOWED",
+        socket_addr: "[::1]:3002",
+        uri: "http://localhost:3002/from-redirect",
+      },
+    ],
+    result: "from-redirect",
+    stderr: "",
+    stdout: "",
+    success: true,
+  },
+);
+
+// Check IP addresses are allowed as well as DNS names
+await expectRun(
+  {
+    code: `
+      export async function run() {
+        return await (await fetch('http://127.0.0.1:3001/to-redirect')).text()
+      }
+    `,
+    parameters: [],
+  },
+  {
+    outbound_requests: [
+      {
+        outcome: "ALLOWED",
+        socket_addr: "127.0.0.1:3001",
+        uri: "http://127.0.0.1:3001/to-redirect",
+      },
+      {
+        outcome: "ALLOWED",
+        socket_addr: "[::1]:3002",
+        uri: "http://localhost:3002/from-redirect",
+      },
+    ],
+    result: "from-redirect",
+    stderr: "",
+    stdout: "",
+    success: true,
   },
 );
 
@@ -702,3 +784,4 @@ await expectRun(
 
 if (proc) proc.kill();
 server.close();
+redirectDestinationServer.close();
