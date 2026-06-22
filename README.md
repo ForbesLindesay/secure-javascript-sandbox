@@ -280,14 +280,14 @@ interface ValidateModuleResponse_Error {
 
 ## Development Setup
 
-1. Build the wasm code by running `cd sandbox && npm install && node --run build -- --release`
+1. Build the wasm code by running `npm install && node --run build:release`
 2. Run the server using `cargo run secure_js_sandbox_server`
 3. Run tests via `zsh tests/some-file.zsh`
 
 You can build the docker image by running:
 
 ```sh
-cd sandbox && npm install && node --run build -- --release && cd .. && \
+npm install && node --run build:release && \
 docker build -t forbeslindesay/secure-js-sandbox .
 ```
 
@@ -308,3 +308,13 @@ docker buildx create \
 
 node --run release
 ```
+
+### Updating Dependencies
+
+1.  Update deps in `package.json`
+2.  Delete `package-lock.json`
+3.  Run `npm install`
+4.  Run `cargo update --breaking -Z unstable-options`
+5.  `docker pull x` for each `FROM` step in `Dockerfile`
+6.  Update both `FROM` steps in `Dockerfile` with the new `sha256` hashes
+7.  Run `rustup update`

@@ -28,7 +28,10 @@ pub(crate) mod wasm_implementation {
             implementation::strip_types(script, filename).map_err(|e| e.to_string())
         }
 
-        fn compile_module(script: String, filename: Option<String>) -> Result<implementation::CompiledModule, String> {
+        fn compile_module(
+            script: String,
+            filename: Option<String>,
+        ) -> Result<implementation::CompiledModule, String> {
             implementation::compile_module(script, filename).map_err(|e| e.to_string())
         }
 
@@ -36,7 +39,8 @@ pub(crate) mod wasm_implementation {
             script: String,
             filename: Option<String>,
         ) -> Result<implementation::CompiledModule, String> {
-            implementation::strip_types_and_compile_module(script, filename).map_err(|e| e.to_string())
+            implementation::strip_types_and_compile_module(script, filename)
+                .map_err(|e| e.to_string())
         }
     }
 }
@@ -48,7 +52,10 @@ mod implementation {
     pub use crate::module_compiler::compile_module;
     pub use crate::type_stripper::strip_types;
 
-    pub fn strip_types_and_compile_module(script: String, filename: Option<String>) -> anyhow::Result<CompiledModule> {
+    pub fn strip_types_and_compile_module(
+        script: String,
+        filename: Option<String>,
+    ) -> anyhow::Result<CompiledModule> {
         // TODO: share AST for better efficiency?
         let stripped = strip_types(script, filename.clone())?;
         compile_module(stripped, filename)

@@ -9,15 +9,15 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0.100"
 bytes-str = "0.2.7"
-swc = { version = "46.0.1" }
-swc_common = "17.0.1"
-swc_ecma_ast = "18.0.0"
-swc_ecma_codegen = "20.0.2"
-swc_ecma_parser = "27.0.6"
-swc_ecma_transforms_base = "30.0.0"
-swc_ecma_visit = "18.0.1"
-swc_ts_fast_strip = "36.0.0"
-wit-bindgen = "0.48.1"
+swc = "69.0.0"
+swc_common = "23.0.2"
+swc_ecma_ast = "25.0.0"
+swc_ecma_codegen = "28.0.2"
+swc_ecma_parser = "41.1.2"
+swc_ecma_transforms_base = "44.0.3"
+swc_ecma_visit = "25.0.0"
+swc_ts_fast_strip = "53.0.0"
+wit-bindgen = "0.58.0"
 
 [dev-dependencies]
 secure_js_sandbox = { version = "0.1.0" }
