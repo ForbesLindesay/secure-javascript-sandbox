@@ -782,6 +782,37 @@ await expectRun(
   },
 );
 
+await startServer({});
+
+const THREE_MB = 3 * 1024 * 1024;
+{
+  const response = await fetch("http://localhost:3000/evaluate", {
+    method: "POST",
+    body: JSON.stringify({
+      code: `(input) => input.length`,
+      parameters: ["1".repeat(THREE_MB)],
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  eq(response.status, 413);
+  eq(await response.text(), "Failed to buffer the request body: length limit exceeded");
+}
+
+await startServer({ SANDBOX_API_REQUEST_BODY_LIMIT_BYTES: "4MB" });
+await expectRun(
+  {
+    code: `(input) => input.length`,
+    parameters: ["1".repeat(THREE_MB)],
+  },
+  {
+    outbound_requests: [],
+    result: THREE_MB,
+    stderr: "",
+    stdout: "",
+    success: true,
+  },
+);
+
 if (proc) proc.kill();
 server.close();
 redirectDestinationServer.close();

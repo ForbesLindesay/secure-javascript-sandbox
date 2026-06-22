@@ -6,7 +6,10 @@ use secure_js_sandbox::SandboxEngine;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
-use crate::{CustomSandboxServerConfig, EvaluateResponse, server_config::EvaluateInput};
+use crate::{
+    CustomSandboxServerConfig, EvaluateResponse,
+    server_config::{EvaluateInput, set_request_body_limit},
+};
 
 pub async fn create_evaluate_handler<
     TRequest: DeserializeOwned + Send + 'static,
@@ -15,15 +18,19 @@ pub async fn create_evaluate_handler<
 >(
     config: TConfig,
 ) -> anyhow::Result<MethodRouter<T>> {
+    let limit = config.get_api_request_body_limit();
     let config = Arc::new(config);
     let engine = Arc::new(SandboxEngine::new()?);
-    let result: MethodRouter<T> = post(
-        async move |Json(request): Json<TRequest>| -> Json<serde_json::Value> {
-            match evaluate(&config, request, &engine).await {
-                Ok(response) => Json(serde_json::to_value(response).unwrap()),
-                Err(err) => Json(serde_json::json!({"error": err.to_string()})),
-            }
-        },
+    let result: MethodRouter<T> = set_request_body_limit(
+        post(
+            async move |Json(request): Json<TRequest>| -> Json<serde_json::Value> {
+                match evaluate(&config, request, &engine).await {
+                    Ok(response) => Json(serde_json::to_value(response).unwrap()),
+                    Err(err) => Json(serde_json::json!({"error": err.to_string()})),
+                }
+            },
+        ),
+        limit,
     );
     Ok(result)
 }

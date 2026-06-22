@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
+use axum::routing::MethodRouter;
 use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
-    CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode, ImportMap, MemoryLimitBytes,
-    MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit, SandboxConfig, StaticImportSource,
-    TableLimit,
+    ApiRequestBodyLimit, CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode,
+    ImportMap, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit,
+    SandboxConfig, StaticImportSource, TableLimit,
 };
 
 use crate::env::get_env;
@@ -29,6 +31,7 @@ pub trait CustomSandboxServerConfig<
 >: Send + Sync + 'static where
     TRequestType: DeserializeOwned + Send + 'static,
 {
+    fn get_api_request_body_limit(&self) -> ApiRequestBodyLimit;
     fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap>;
 }
 
@@ -39,6 +42,9 @@ impl<
     T: CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap>,
 > CustomSandboxServerConfig<TRequestType, THttpMode, TImportMap> for Arc<T>
 {
+    fn get_api_request_body_limit(&self) -> ApiRequestBodyLimit {
+        self.as_ref().get_api_request_body_limit()
+    }
     fn get_evaluate_input(&self, request: TRequestType) -> EvaluateInput<THttpMode, TImportMap> {
         self.as_ref().get_evaluate_input(request)
     }
@@ -118,6 +124,7 @@ pub struct SandboxServerConfig<
     THttpMode: CustomHttpMode = HttpMode,
     TImportMap: CustomImportMap + Clone = ImportMap,
 > {
+    pub api_request_body_limit: ApiRequestBodyLimit,
     pub cpu_fuel: CpuFuel,
     pub memory_limits: SandboxServerMemoryLimits,
     pub http: THttpMode,
@@ -130,6 +137,7 @@ pub struct SandboxServerConfig<
 impl Default for SandboxServerConfig {
     fn default() -> Self {
         SandboxServerConfig {
+            api_request_body_limit: Default::default(),
             cpu_fuel: Default::default(),
             memory_limits: Default::default(),
             http: Default::default(),
@@ -143,25 +151,17 @@ impl Default for SandboxServerConfig {
 
 impl SandboxServerConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let mut config = Self::default();
+        let mut config = Self {
+            api_request_body_limit: api_request_body_limit_from_env()?,
+            cpu_fuel: get_env("SANDBOX_CPU_FUEL")?.unwrap_or_default(),
+            memory_limits: Default::default(),
+            http: get_env("SANDBOX_HTTP_MODE")?.unwrap_or_default(),
+            request_limit: get_env("SANDBOX_REQUEST_LIMIT")?.unwrap_or_default(),
+            import_map: import_map_from_env()?,
+            sandbox_auto_strip_types: get_env("SANDBOX_AUTO_STRIP_TYPES")?.unwrap_or(false),
+            module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?.map(|str| str.into_boxed_str()),
+        };
         config.memory_limits.set_from_env("SANDBOX")?;
-        if let Some(cpu_fuel) = get_env("SANDBOX_CPU_FUEL")? {
-            config.cpu_fuel = cpu_fuel;
-        }
-        if let Some(http) = get_env("SANDBOX_HTTP_MODE")? {
-            config.http = http;
-        }
-        if let Some(request_limit) = get_env("SANDBOX_REQUEST_LIMIT")? {
-            config.request_limit = request_limit;
-        }
-        if let Some(sandbox_auto_strip_types) = get_env("SANDBOX_AUTO_STRIP_TYPES")? {
-            config.sandbox_auto_strip_types = sandbox_auto_strip_types;
-        }
-        if let Some(module_method) = get_env::<String>("SANDBOX_MODULE_METHOD")? {
-            config.module_method = Some(module_method.into_boxed_str());
-        }
-        config.import_map = import_map_from_env()?;
-
         Ok(config)
     }
 }
@@ -170,6 +170,9 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
     CustomSandboxServerConfig<EvaluateRequest, THttpMode, TImportMap>
     for SandboxServerConfig<THttpMode, TImportMap>
 {
+    fn get_api_request_body_limit(&self) -> ApiRequestBodyLimit {
+        self.api_request_body_limit
+    }
     fn get_evaluate_input(&self, request: EvaluateRequest) -> EvaluateInput<THttpMode, TImportMap> {
         EvaluateInput {
             code: request.code,
@@ -192,11 +195,13 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
 }
 
 pub struct AllowRequestToConfigureSandbox<TImportMap: CustomImportMap + Clone = ImportMap> {
+    pub api_request_body_limit: ApiRequestBodyLimit,
     pub import_map: TImportMap,
 }
 impl Default for AllowRequestToConfigureSandbox {
     fn default() -> Self {
         AllowRequestToConfigureSandbox {
+            api_request_body_limit: Default::default(),
             import_map: Default::default(),
         }
     }
@@ -204,15 +209,19 @@ impl Default for AllowRequestToConfigureSandbox {
 
 impl AllowRequestToConfigureSandbox {
     pub fn from_env() -> anyhow::Result<Self> {
-        let mut config = Self::default();
-        config.import_map = import_map_from_env()?;
-        Ok(config)
+        Ok(Self {
+            api_request_body_limit: api_request_body_limit_from_env()?,
+            import_map: import_map_from_env()?,
+        })
     }
 }
 impl<TImportMap: CustomImportMap + Clone>
     CustomSandboxServerConfig<EvaluateRequestWithConfig, HttpMode, TImportMap>
     for AllowRequestToConfigureSandbox<TImportMap>
 {
+    fn get_api_request_body_limit(&self) -> ApiRequestBodyLimit {
+        self.api_request_body_limit
+    }
     fn get_evaluate_input(
         &self,
         request: EvaluateRequestWithConfig,
@@ -235,6 +244,10 @@ impl<TImportMap: CustomImportMap + Clone>
             },
         }
     }
+}
+
+fn api_request_body_limit_from_env() -> anyhow::Result<ApiRequestBodyLimit> {
+    get_env("SANDBOX_API_REQUEST_BODY_LIMIT_BYTES").map(|v| v.unwrap_or_default())
 }
 
 fn import_map_from_env() -> anyhow::Result<ImportMap> {
@@ -268,4 +281,15 @@ fn import_map_from_env() -> anyhow::Result<ImportMap> {
     } else {
         Ok(ImportMap::default())
     }
+}
+
+pub(crate) fn set_request_body_limit<T: Clone + Send + Sync + 'static>(
+    router: MethodRouter<T>,
+    api_request_body_limit: ApiRequestBodyLimit,
+) -> MethodRouter<T> {
+    let limit = match api_request_body_limit {
+        ApiRequestBodyLimit::Limited(bytes) => DefaultBodyLimit::max(bytes),
+        ApiRequestBodyLimit::Unbounded => DefaultBodyLimit::disable(),
+    };
+    router.layer(limit)
 }

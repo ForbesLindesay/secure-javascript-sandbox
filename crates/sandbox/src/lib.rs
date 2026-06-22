@@ -14,7 +14,8 @@ pub use hyper::{Request, Uri};
 
 pub use imports::{CustomImportMap, ImportMap, ResolvedModule, StaticImportSource};
 pub use limit_values::{
-    CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit, TableLimit,
+    ApiRequestBodyLimit, CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit,
+    TableLimit,
 };
 pub use memory::MemoryLimits;
 pub use sandbox::{EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine};

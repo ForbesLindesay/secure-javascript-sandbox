@@ -2,7 +2,7 @@
 
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get},
 };
 use secure_js_sandbox_axum_handler::{
     AllowRequestToConfigureSandbox, SandboxServerConfig, TsUtilsHandler, create_evaluate_handler,
@@ -13,7 +13,9 @@ mod signal;
 
 #[tokio::main]
 pub async fn main() -> anyhow::Result<()> {
-    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install default TLS provider");
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install default TLS provider");
 
     let main = start_server();
     let signal_listener = signal::listen_signal();
@@ -31,12 +33,12 @@ pub async fn start_server() -> anyhow::Result<()> {
     if get_env("SANDBOX_ALLOW_CONFIG_IN_REQUEST")?.unwrap_or(false) {
         app = app.route(
             "/evaluate",
-            post(create_evaluate_handler(AllowRequestToConfigureSandbox::from_env()?).await?),
+            create_evaluate_handler(AllowRequestToConfigureSandbox::from_env()?).await?,
         );
     } else {
         app = app.route(
             "/evaluate",
-            post(create_evaluate_handler(SandboxServerConfig::from_env()?).await?),
+            create_evaluate_handler(SandboxServerConfig::from_env()?).await?,
         );
     }
 
@@ -49,13 +51,13 @@ pub async fn start_server() -> anyhow::Result<()> {
         if enable_strip_types_endpoint {
             app = app.route(
                 "/strip_types",
-                post(create_strip_types_handler(handler.clone())),
+                create_strip_types_handler(handler.clone()),
             );
         }
         if enable_validate_module_endpoint {
             app = app.route(
                 "/validate_module",
-                post(create_validate_module_handler(handler)),
+                create_validate_module_handler(handler),
             );
         }
     }

@@ -464,6 +464,16 @@ number_type!(
 );
 
 optional_bound!(
+    ApiRequestBodyLimit,
+    usize,
+    MemorySuffix,
+    name = "API Request Body Limit Bytes",
+    expect = "a positive integer or the string 'UNBOUNDED' or a string like '8MB'",
+    default = 2 * 1024 * 1024,
+    min = 1
+);
+
+optional_bound!(
     MemoryLimitBytes,
     usize,
     MemorySuffix,

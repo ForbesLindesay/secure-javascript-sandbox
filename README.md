@@ -35,6 +35,10 @@ PORT="3000"
 # This would be much less secure.
 SANDBOX_ALLOW_CONFIG_IN_REQUEST="FALSE"
 
+# How big can the HTTP request sent to /evaluate be in bytes.
+# You can set this to "UNBOUNDED" to remove this limit.
+SANDBOX_API_REQUEST_BODY_LIMIT_BYTES="2MB"
+
 # How many CPU cycles to allow per request. This corresponds
 # to about 100ms on my 2024 MacBook Pro
 SANDBOX_CPU_FUEL="440_000_000"
@@ -90,6 +94,7 @@ SANDBOX_ENABLE_STRIP_TYPES_ENDPOINT="false"
 # These settings are equivalent to the SANDBOX_ variants above, but apply
 # to the /strip_types and /validate_module endpoints instead of the /evaluate
 # endpoint
+TS_UTILS_API_REQUEST_BODY_LIMIT_BYTES=SANDBOX_API_REQUEST_BODY_LIMIT_BYTES
 TS_UTILS_CPU_FUEL=SANDBOX_CPU_FUEL
 TS_UTILS_MAX_MEMORY_BYTES=TS_UTILS_MAX_MEMORY_BYTES
 TS_UTILS_MAX_TABLE_ELEMENTS=TS_UTILS_MAX_TABLE_ELEMENTS

@@ -5,12 +5,12 @@ use axum::{
     routing::{MethodRouter, post},
 };
 use secure_js_sandbox::{
-    TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig, TsUtilsSandboxInstance,
-    ValidateModuleMode,
+    ApiRequestBodyLimit, TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig,
+    TsUtilsSandboxInstance, ValidateModuleMode,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{SandboxServerConfig, get_env};
+use crate::{SandboxServerConfig, get_env, server_config::set_request_body_limit};
 
 #[derive(Deserialize)]
 pub struct StripTypesRequest {
@@ -76,31 +76,43 @@ pub enum ValidateModuleResponse {
 
 #[derive(Clone)]
 pub struct TsUtilsHandler {
+    api_request_body_limit: ApiRequestBodyLimit,
     engine: Arc<TsUtilsEngine>,
     config: Arc<TsUtilsSandboxConfig>,
 }
 impl TsUtilsHandler {
     pub fn new(config: TsUtilsSandboxConfig) -> anyhow::Result<Self> {
+        Self::new_with_limit(Default::default(), config)
+    }
+    pub fn new_with_limit(
+        api_request_body_limit: ApiRequestBodyLimit,
+        config: TsUtilsSandboxConfig,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
+            api_request_body_limit,
             engine: Arc::new(TsUtilsEngine::new()?),
             config: Arc::new(config),
         })
     }
     pub fn from_env() -> anyhow::Result<Self> {
         let SandboxServerConfig {
-            mut cpu_fuel,
+            api_request_body_limit,
+            cpu_fuel,
             mut memory_limits,
             ..
         } = SandboxServerConfig::from_env()?;
-        if let Some(cpu_fuel_value) = get_env("TS_UTILS_CPU_FUEL")? {
-            cpu_fuel = cpu_fuel_value;
-        }
         memory_limits.set_from_env("TS_UTILS")?;
         let config = TsUtilsSandboxConfig {
-            cpu_fuel,
+            cpu_fuel: get_env("TS_UTILS_CPU_FUEL")?.unwrap_or(cpu_fuel),
             memory_limits: memory_limits.to_memory_limits(),
         };
-        Self::new(config)
+        Self::new_with_limit(
+            get_env("TS_UTILS_API_REQUEST_BODY_LIMIT_BYTES")?.unwrap_or(api_request_body_limit),
+            config,
+        )
+    }
+    pub fn api_request_body_limit(&self) -> ApiRequestBodyLimit {
+        self.api_request_body_limit
     }
     pub async fn build(&self) -> Result<TsUtilsSandboxInstance, TsUtilsEvaluateError> {
         self.engine
@@ -113,10 +125,14 @@ impl TsUtilsHandler {
 pub fn create_strip_types_handler<T: Clone + Send + Sync + 'static>(
     handler: TsUtilsHandler,
 ) -> MethodRouter<T> {
-    let result: MethodRouter<T> = post(
-        async move |Json(request): Json<StripTypesRequest>| -> Json<StripTypesResponse> {
-            Json(strip_types(&handler, request).await)
-        },
+    let limit = handler.api_request_body_limit();
+    let result: MethodRouter<T> = set_request_body_limit(
+        post(
+            async move |Json(request): Json<StripTypesRequest>| -> Json<StripTypesResponse> {
+                Json(strip_types(&handler, request).await)
+            },
+        ),
+        limit,
     );
     result
 }
@@ -148,11 +164,12 @@ pub async fn strip_types(
 pub fn create_validate_module_handler<T: Clone + Send + Sync + 'static>(
     handler: TsUtilsHandler,
 ) -> MethodRouter<T> {
-    let result: MethodRouter<T> = post(
+    let limit = handler.api_request_body_limit();
+    let result: MethodRouter<T> = set_request_body_limit(post(
         async move |Json(request): Json<ValidateModuleRequest>| -> Json<ValidateModuleResponse> {
             Json(validate_module(&handler, request).await)
         },
-    );
+    ), limit);
     result
 }
 
