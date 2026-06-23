@@ -46,17 +46,9 @@ pub struct RequestHeaders<'a> {
     pub headers: &'a HeaderMap<HeaderValue>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct Requests {
     inner: Arc<Mutex<Vec<(Uri, Option<SocketAddr>, RequestValidationOutcome)>>>,
-}
-
-impl Default for Requests {
-    fn default() -> Self {
-        Requests {
-            inner: Default::default(),
-        }
-    }
 }
 
 impl Requests {
@@ -84,18 +76,13 @@ impl CustomHttpMode for BlockAllHttp {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum HttpMode {
     AllowAll,
     AllowGlobalIpOnly,
     AllowListHosts(Arc<HashSet<String>>),
+    #[default]
     BlockAll,
-}
-
-impl Default for HttpMode {
-    fn default() -> Self {
-        HttpMode::BlockAll
-    }
 }
 
 #[derive(Deserialize)]
@@ -221,7 +208,7 @@ pub(crate) async fn send_request_handler(
                 authority.to_string()
             } else {
                 let port = if use_tls { 443 } else { 80 };
-                format!("{}:{port}", authority.to_string())
+                format!("{}:{port}", authority)
             }
         } else {
             return Err(ErrorCode::HttpRequestUriInvalid);
@@ -336,7 +323,7 @@ pub(crate) async fn send_request_handler(
                 return Err(ErrorCode::LoopDetected);
             }
             let mut request = hyper::Request::from_parts(parts, Default::default());
-            if request.method() != &Method::GET && request.method() != &Method::HEAD {
+            if request.method() != Method::GET && request.method() != Method::HEAD {
                 *request.method_mut() = Method::GET;
                 request.headers_mut().remove(header::CONTENT_ENCODING);
                 request.headers_mut().remove(header::CONTENT_LANGUAGE);
@@ -387,7 +374,7 @@ async fn get_tcp_stream(
         }
     }
 
-    return Err(last_err
+    Err(last_err
         .map(|e| match e.kind() {
             std::io::ErrorKind::AddrNotAvailable => {
                 dns_error("address not available".to_string(), 0)
@@ -403,7 +390,7 @@ async fn get_tcp_stream(
                 }
             }
         })
-        .unwrap_or_else(|| dns_error("address not available".to_string(), 0)));
+        .unwrap_or_else(|| dns_error("address not available".to_string(), 0)))
 }
 
 fn is_redirect_status(status: hyper::StatusCode) -> bool {

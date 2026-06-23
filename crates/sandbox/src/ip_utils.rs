@@ -83,7 +83,7 @@ impl IpUtils for std::net::Ipv6Addr {
                     || matches!(self.segments(), [0x2001, 4, 0x112, _, _, _, _, _])
                     // ORCHIDv2 (`2001:20::/28`)
                     // Drone Remote ID Protocol Entity Tags (DETs) Prefix (`2001:30::/28`)`
-                    || matches!(self.segments(), [0x2001, b, _, _, _, _, _, _] if b >= 0x20 && b <= 0x3F)
+                    || matches!(self.segments(), [0x2001, b, _, _, _, _, _, _] if (0x20..=0x3F).contains(&b))
                 ))
             // 6to4 (`2002::/16`) – it's not explicitly documented as globally reachable,
             // IANA says N/A.

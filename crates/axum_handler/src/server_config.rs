@@ -54,7 +54,7 @@ fn default_trap_on_grow_failure() -> bool {
     false
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct SandboxServerMemoryLimits {
     #[serde(default)]
     pub memory_size_bytes: MemoryLimitBytes,
@@ -103,20 +103,6 @@ impl SandboxServerMemoryLimits {
         set_from_env!(self, stdout_max_bytes, prefix, "STDOUT_MAX_BYTES");
         set_from_env!(self, stderr_max_bytes, prefix, "STDERR_MAX_BYTES");
         Ok(())
-    }
-}
-impl Default for SandboxServerMemoryLimits {
-    fn default() -> Self {
-        SandboxServerMemoryLimits {
-            memory_size_bytes: Default::default(),
-            table_elements: Default::default(),
-            instances: Default::default(),
-            tables: Default::default(),
-            memories: Default::default(),
-            trap_on_grow_failure: Default::default(),
-            stdout_max_bytes: Default::default(),
-            stderr_max_bytes: Default::default(),
-        }
     }
 }
 

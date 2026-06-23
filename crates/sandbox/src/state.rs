@@ -62,17 +62,17 @@ impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
     ) -> wasmtime_wasi_http::p2::HttpResult<wasmtime_wasi_http::p2::types::HostFutureIncomingResponse>
     {
         self.request_count = self.request_count.saturating_add(1);
-        if let RequestLimit::Limited(max) = self.request_limit {
-            if self.request_count > max {
-                self.requests.push((
-                    request.uri().clone(),
-                    None,
-                    RequestValidationOutcome::Blocked,
-                ));
-                return Ok(HostFutureIncomingResponse::ready(Ok(Err(
-                    ErrorCode::ConnectionLimitReached,
-                ))));
-            }
+        if let RequestLimit::Limited(max) = self.request_limit
+            && self.request_count > max
+        {
+            self.requests.push((
+                request.uri().clone(),
+                None,
+                RequestValidationOutcome::Blocked,
+            ));
+            return Ok(HostFutureIncomingResponse::ready(Ok(Err(
+                ErrorCode::ConnectionLimitReached,
+            ))));
         }
         let http_mode = self.http.clone();
         let requests = self.requests.clone();

@@ -44,16 +44,12 @@ impl StaticImportSource {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum ImportMap {
+    #[default]
     AllowHttp,
     BlockAll,
     StaticImportMap(Arc<HashMap<String, StaticImportSource>>),
-}
-impl Default for ImportMap {
-    fn default() -> Self {
-        ImportMap::AllowHttp
-    }
 }
 impl CustomImportMap for ImportMap {
     fn resolve_import_path(&self, path: String, parent: String) -> anyhow::Result<ResolvedModule> {

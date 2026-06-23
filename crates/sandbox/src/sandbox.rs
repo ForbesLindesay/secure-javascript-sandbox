@@ -291,7 +291,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
         parameters: &[serde_json::Value],
         options: &EvaluateOptions,
     ) -> SandboxEvaluationResult {
-        let parameters = match prepare_parameters(&parameters) {
+        let parameters = match prepare_parameters(parameters) {
             Ok(params) => params,
             Err(err) => {
                 return SandboxEvaluationResult {
@@ -310,7 +310,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                 self.sandbox
                     .call_evaluate(
                         &mut self.store,
-                        &code,
+                        code,
                         &parameters,
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
@@ -323,8 +323,8 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                 self.sandbox
                     .call_evaluate_module(
                         &mut self.store,
-                        &code,
-                        &method,
+                        code,
+                        method,
                         &parameters,
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
@@ -383,13 +383,9 @@ impl Default for EvaluateOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum EvaluateMode {
     ModuleMethod(Box<str>),
+    #[default]
     FunctionCall,
-}
-impl Default for EvaluateMode {
-    fn default() -> Self {
-        EvaluateMode::FunctionCall
-    }
 }

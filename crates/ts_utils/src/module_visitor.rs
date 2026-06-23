@@ -137,10 +137,10 @@ impl IdentifierVisitor {
 }
 impl Visit for IdentifierVisitor {
     fn visit_ident(&mut self, node: &Ident) {
-        if node.sym.as_str().starts_with("$") {
-            if let Ok(v) = node.sym.as_str()[1..].parse::<u32>() {
-                self.identifiers.insert(v);
-            }
+        if node.sym.as_str().starts_with("$")
+            && let Ok(v) = node.sym.as_str()[1..].parse::<u32>()
+        {
+            self.identifiers.insert(v);
         }
     }
 }
@@ -183,10 +183,8 @@ impl ModuleVisitor {
                 self.export_name(&ident.id);
             }
             Pat::Array(array_pat) => {
-                for elem in &array_pat.elems {
-                    if let Some(elem) = elem {
-                        self.export_names_from_pat(elem);
-                    }
+                for elem in array_pat.elems.iter().flatten() {
+                    self.export_names_from_pat(elem);
                 }
             }
             Pat::Object(object_pat) => {

@@ -10,7 +10,7 @@ pub struct EvaluateRequest {
     pub filename: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct SandboxServerRequestConfig {
     #[serde(default)]
     pub cpu_fuel: CpuFuel,
@@ -24,19 +24,6 @@ pub struct SandboxServerRequestConfig {
     pub sandbox_auto_strip_types: bool,
     #[serde(default)]
     pub module_method: Option<Box<str>>,
-}
-
-impl Default for SandboxServerRequestConfig {
-    fn default() -> Self {
-        SandboxServerRequestConfig {
-            cpu_fuel: Default::default(),
-            memory_limits: Default::default(),
-            http: Default::default(),
-            request_limit: Default::default(),
-            sandbox_auto_strip_types: false,
-            module_method: None,
-        }
-    }
 }
 
 #[derive(Deserialize)]

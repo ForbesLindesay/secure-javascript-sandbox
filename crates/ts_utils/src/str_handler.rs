@@ -10,10 +10,7 @@ impl std::io::Write for StringHandlerWriteTarget {
         if let Some(ref mut buffer) = *self.buffer.lock().unwrap() {
             buffer.write(buf)
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Buffer has been taken",
-            ))
+            Err(std::io::Error::other("Buffer has been taken"))
         }
     }
 
@@ -21,10 +18,7 @@ impl std::io::Write for StringHandlerWriteTarget {
         if let Some(ref mut buffer) = *self.buffer.lock().unwrap() {
             buffer.flush()
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Buffer has been taken",
-            ))
+            Err(std::io::Error::other("Buffer has been taken"))
         }
     }
 }

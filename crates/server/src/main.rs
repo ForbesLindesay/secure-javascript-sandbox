@@ -59,7 +59,7 @@ pub async fn start_server() -> anyhow::Result<()> {
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    println!("Listening on http://{}", &addr);
+    println!("Listening on http://{}", addr);
 
     axum::serve(listener, app).await.unwrap();
 

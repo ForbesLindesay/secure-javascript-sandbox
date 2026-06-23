@@ -20,7 +20,7 @@ mod bindings {
 }
 pub use bindings::exports::local::ts_utils::ts_utils_impl::{ModuleExport, StaticImport};
 
-#[derive( Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub enum ValidateModuleMode {
     #[default]
     JavaScript,
