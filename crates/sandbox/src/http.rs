@@ -360,7 +360,16 @@ async fn get_tcp_stream(
         }
         let tcp_stream = TcpStream::connect(addr).await;
         match tcp_stream {
-            Ok(stream) => return Ok((stream, addr)),
+            Ok(stream) => {
+                // Without set_zero_linger, the TCP stream will stay open for
+                // abut 60 seconds after the request finishes, causing outbound
+                // requests to fail once we run out of ephemeral TCP ports.
+                if let Err(err) = stream.set_zero_linger() {
+                    last_err = Some(err);
+                    continue;
+                }
+                return Ok((stream, addr));
+            }
             Err(err) => {
                 last_err = Some(err);
             }

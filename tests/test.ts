@@ -432,25 +432,37 @@ await expectRun(
   },
 );
 
-console.log("Testing redirect following under heavy load");
-for (let i = 0; i < 100; i++) {
-  process.stdout.write(".");
+{
+  let requestCount = 0;
+  console.log("Testing redirect following under heavy load");
   await Promise.all(
     Array.from({ length: 100 }).map(async () => {
-      const { result } = await run({
-        code: `
-            export async function run() {
-              return await (await fetch('http://localhost:3001/to-redirect')).text()
-            }
-          `,
-        parameters: [],
-      });
-      eq(result, "from-redirect");
+      for (let i = 0; i < 100; i++) {
+        const { result } = await run({
+          code: `
+              export async function run() {
+                let first = await (await fetch('http://localhost:3001/to-redirect')).text()
+                for (let i = 0; i < 9; i++) {
+                  if (first !== await (await fetch('http://localhost:3001/to-redirect')).text()) {
+                    return "Inconsistent results"
+                  }
+                }
+                return first
+              }
+            `,
+          parameters: [],
+        });
+        eq(result, "from-redirect");
+        requestCount++;
+        if (0 === requestCount % 100) {
+          process.stdout.write(".");
+        }
+      }
     }),
   );
+  process.stdout.write("\n");
+  console.log("Tested redirect following");
 }
-process.stdout.write("\n");
-console.log("Tested redirect following");
 
 // Check IP addresses are allowed as well as DNS names
 await expectRun(
