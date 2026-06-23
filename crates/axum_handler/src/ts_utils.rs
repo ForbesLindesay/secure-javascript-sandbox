@@ -111,6 +111,7 @@ impl TsUtilsHandler {
             config,
         )
     }
+    #[must_use]
     pub fn api_request_body_limit(&self) -> ApiRequestBodyLimit {
         self.api_request_body_limit
     }

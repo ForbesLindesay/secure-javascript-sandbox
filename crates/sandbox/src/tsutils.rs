@@ -5,7 +5,7 @@ use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
-use crate::http::BlockAllHttp;
+use crate::http::{BlockAllHttp, Requests};
 use crate::imports::ImportMapBlockAll;
 use crate::state::{SandboxHttpState, SandboxState};
 use crate::{CpuFuel, MemoryLimits, RequestLimit};
@@ -36,8 +36,7 @@ impl<'a> Deserialize<'a> for ValidateModuleMode {
             "JAVASCRIPT" => Ok(ValidateModuleMode::JavaScript),
             "TYPESCRIPT" => Ok(ValidateModuleMode::TypeScript),
             _ => Err(serde::de::Error::custom(format!(
-                "Invalid ValidateModuleMode: {}",
-                s
+                "Invalid ValidateModuleMode: {s}"
             ))),
         }
     }
@@ -72,7 +71,7 @@ impl TsUtilsEngine {
 
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
-        let engine = Engine::new(&engine_config).unwrap();
+        let engine = Engine::new(&engine_config)?;
         let mut linker: Linker<SandboxState<ImportMapBlockAll, BlockAllHttp>> =
             Linker::new(&engine);
 
@@ -108,7 +107,7 @@ impl TsUtilsEngine {
                 http: SandboxHttpState {
                     http: BlockAllHttp,
                     request_limit: RequestLimit::Limited(0),
-                    requests: Default::default(),
+                    requests: Requests::default(),
                     request_count: 0,
                 },
                 imports: ImportMapBlockAll,
@@ -120,7 +119,7 @@ impl TsUtilsEngine {
         store.set_fuel(config.cpu_fuel.into())?;
         let sandbox =
             bindings::TsUtils::instantiate_async(&mut store, &self.component, &self.linker).await?;
-        Ok(TsUtilsSandboxInstance { store, sandbox })
+        Ok(TsUtilsSandboxInstance { sandbox, store })
     }
 }
 
@@ -135,8 +134,8 @@ impl fmt::Display for TsUtilsEvaluateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TsUtilsEvaluateError::FuelExhausted => write!(f, "CPU fuel exhausted"),
-            TsUtilsEvaluateError::JavaScriptError(msg) => write!(f, "{}", msg),
-            TsUtilsEvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
+            TsUtilsEvaluateError::JavaScriptError(msg) => write!(f, "{msg}"),
+            TsUtilsEvaluateError::WasmError(err) => write!(f, "Wasm error: {err}"),
         }
     }
 }
@@ -159,6 +158,7 @@ impl TsUtilsSandboxInstance {
         self.store.set_fuel(fuel.into())?;
         Ok(())
     }
+    #[must_use]
     pub fn get_fuel_remaining(&self) -> u64 {
         self.store.get_fuel().unwrap_or(0)
     }

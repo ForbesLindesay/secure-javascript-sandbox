@@ -81,6 +81,7 @@ macro_rules! set_from_env {
     };
 }
 impl SandboxServerMemoryLimits {
+    #[must_use]
     pub fn to_memory_limits(&self) -> MemoryLimits {
         MemoryLimits {
             memory_size_bytes: self.memory_size_bytes,
@@ -146,7 +147,7 @@ impl SandboxServerConfig {
             import_map: import_map_from_env()?,
             sandbox_auto_strip_types: get_env("SANDBOX_AUTO_STRIP_TYPES")?.unwrap_or(false),
             module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?
-                .map(|str| str.into_boxed_str()),
+                .map(String::into_boxed_str),
         };
         config.memory_limits.set_from_env("SANDBOX")?;
         Ok(config)
@@ -234,7 +235,7 @@ impl<TImportMap: CustomImportMap + Clone>
 }
 
 fn api_request_body_limit_from_env() -> anyhow::Result<ApiRequestBodyLimit> {
-    get_env("SANDBOX_API_REQUEST_BODY_LIMIT_BYTES").map(|v| v.unwrap_or_default())
+    get_env("SANDBOX_API_REQUEST_BODY_LIMIT_BYTES").map(Option::unwrap_or_default)
 }
 
 fn import_map_from_env() -> anyhow::Result<ImportMap> {

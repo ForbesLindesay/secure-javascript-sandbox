@@ -1,4 +1,5 @@
 #![deny(warnings, clippy::all, clippy::pedantic, clippy::unwrap_used)]
+#![allow(clippy::missing_errors_doc, clippy::unused_async_trait_impl)]
 
 use std::{error::Error, time::Instant};
 use wasmtime::{Config, Engine};

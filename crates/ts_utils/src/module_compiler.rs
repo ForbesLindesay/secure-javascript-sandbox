@@ -70,13 +70,11 @@ pub fn compile_module(input: String, filename: Option<String>) -> Result<Compile
             }
             Replacement::ImportFnReference(ident) => ident.bytes().collect(),
         };
-        let mut replacement_idx = 0;
         let (start, end) = (span.lo.0 as usize - 1, span.hi.0 as usize - 1);
 
-        for (i, c) in source[start..end].char_indices() {
+        for (replacement_idx, (i, c)) in source[start..end].char_indices().enumerate() {
             let i = start + i;
             let replacement_char = replacement.get(replacement_idx);
-            replacement_idx += 1;
             if let Some(r) = replacement_char {
                 if c.len_utf8() != 1 {
                     return Err(anyhow::anyhow!("replacement character length mismatch"));

@@ -216,8 +216,8 @@ impl fmt::Display for EvaluateError {
                 }
                 Ok(())
             }
-            EvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
-            EvaluateError::JsonError(err) => write!(f, "JSON error: {}", err),
+            EvaluateError::WasmError(err) => write!(f, "Wasm error: {err}"),
+            EvaluateError::JsonError(err) => write!(f, "JSON error: {err}"),
         }
     }
 }
