@@ -26,7 +26,7 @@ impl IpUtilsV4Helper for std::net::Ipv4Addr {
         self.octets()[0] == 198 && (self.octets()[1] & 0xfe) == 18
     }
     fn is_reserved_ext(&self) -> bool {
-        self.octets()[0] & 240 == 240 && !self.is_broadcast()
+        self.octets()[0] & 0xF0 == 0xF0 && !self.is_broadcast()
     }
 }
 impl IpUtils for std::net::Ipv4Addr {

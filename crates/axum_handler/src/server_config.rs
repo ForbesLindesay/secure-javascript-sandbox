@@ -94,6 +94,11 @@ impl SandboxServerMemoryLimits {
             stdout_bytes: self.stdout_max_bytes,
         }
     }
+    pub(crate) fn from_env(prefix: &str) -> anyhow::Result<Self> {
+        let mut result = Self::default();
+        result.set_from_env(prefix)?;
+        Ok(result)
+    }
     pub(crate) fn set_from_env(&mut self, prefix: &str) -> anyhow::Result<()> {
         set_from_env!(self, memory_size_bytes, prefix, "MAX_MEMORY_BYTES");
         set_from_env!(self, table_elements, prefix, "MAX_TABLE_ELEMENTS");
@@ -124,12 +129,12 @@ pub struct SandboxServerConfig<
 impl Default for SandboxServerConfig {
     fn default() -> Self {
         SandboxServerConfig {
-            api_request_body_limit: Default::default(),
-            cpu_fuel: Default::default(),
-            memory_limits: Default::default(),
-            http: Default::default(),
-            request_limit: Default::default(),
-            import_map: Default::default(),
+            api_request_body_limit: ApiRequestBodyLimit::default(),
+            cpu_fuel: CpuFuel::default(),
+            memory_limits: SandboxServerMemoryLimits::default(),
+            http: HttpMode::default(),
+            request_limit: RequestLimit::default(),
+            import_map: ImportMap::default(),
             sandbox_auto_strip_types: false,
             module_method: None,
         }
@@ -138,19 +143,16 @@ impl Default for SandboxServerConfig {
 
 impl SandboxServerConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let mut config = Self {
+        Ok(Self {
             api_request_body_limit: api_request_body_limit_from_env()?,
             cpu_fuel: get_env("SANDBOX_CPU_FUEL")?.unwrap_or_default(),
-            memory_limits: Default::default(),
+            memory_limits: SandboxServerMemoryLimits::from_env("SANDBOX")?,
             http: get_env("SANDBOX_HTTP_MODE")?.unwrap_or_default(),
             request_limit: get_env("SANDBOX_REQUEST_LIMIT")?.unwrap_or_default(),
             import_map: import_map_from_env()?,
             sandbox_auto_strip_types: get_env("SANDBOX_AUTO_STRIP_TYPES")?.unwrap_or(false),
-            module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?
-                .map(String::into_boxed_str),
-        };
-        config.memory_limits.set_from_env("SANDBOX")?;
-        Ok(config)
+            module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?.map(String::into_boxed_str),
+        })
     }
 }
 
@@ -182,17 +184,10 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
     }
 }
 
+#[derive(Default)]
 pub struct AllowRequestToConfigureSandbox<TImportMap: CustomImportMap + Clone = ImportMap> {
     pub api_request_body_limit: ApiRequestBodyLimit,
     pub import_map: TImportMap,
-}
-impl Default for AllowRequestToConfigureSandbox {
-    fn default() -> Self {
-        AllowRequestToConfigureSandbox {
-            api_request_body_limit: Default::default(),
-            import_map: Default::default(),
-        }
-    }
 }
 
 impl AllowRequestToConfigureSandbox {

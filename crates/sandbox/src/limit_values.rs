@@ -1,24 +1,25 @@
 use serde::{Deserialize, de::Visitor};
 use std::{marker::PhantomData, str::FromStr};
 
+#[derive(Clone, Copy)]
 enum ScalePrefix {
     K,
     M,
     G,
 }
 impl ScalePrefix {
-    fn to_pow(self) -> u32 {
+    fn into_pow(self) -> u32 {
         match self {
             ScalePrefix::K => 1,
             ScalePrefix::M => 2,
             ScalePrefix::G => 3,
         }
     }
-    fn to_si_multiplier(self) -> u32 {
-        u32::pow(1000, self.to_pow())
+    fn into_si_multiplier(self) -> u32 {
+        u32::pow(1000, self.into_pow())
     }
-    fn to_byte_multiplier(self) -> u32 {
-        u32::pow(1024, self.to_pow())
+    fn into_byte_multiplier(self) -> u32 {
+        u32::pow(1024, self.into_pow())
     }
 }
 impl TryFrom<char> for ScalePrefix {
@@ -75,7 +76,7 @@ impl SuffixParser for MemorySuffix {
         match (a, b) {
             ('B' | 'b', None) => Ok(1),
             (scale_prefix, Some('B' | 'b')) => {
-                Ok(ScalePrefix::try_from(scale_prefix)?.to_byte_multiplier())
+                Ok(ScalePrefix::try_from(scale_prefix)?.into_byte_multiplier())
             }
             _ => Err(()),
         }
@@ -88,7 +89,7 @@ impl SuffixParser for NoUnitSuffix {
         if b.is_some() {
             return Err(());
         }
-        Ok(ScalePrefix::try_from(a)?.to_si_multiplier())
+        Ok(ScalePrefix::try_from(a)?.into_si_multiplier())
     }
 }
 trait PositiveNumber:
@@ -190,7 +191,7 @@ impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> NumberVisitor
             })
     }
 }
-impl<'de, TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'de>
+impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'_>
     for NumberVisitor<TNumber, TResult>
 {
     type Value = TResult;
@@ -331,9 +332,9 @@ macro_rules! number_type {
                 }
             }
         }
-        impl Into<$underlying> for $id {
-            fn into(self) -> $underlying {
-                self.0
+        impl From<$id> for $underlying {
+            fn from(v: $id) -> $underlying {
+                v.0
             }
         }
         impl FromStr for $id {
@@ -366,6 +367,14 @@ macro_rules! optional_bound {
             Limited($underlying),
             Unbounded,
         }
+        impl $id {
+            pub fn is_within_bound(&self, requested: $underlying) -> bool {
+                match self {
+                    Self::Limited(max) => *max >= requested,
+                    Self::Unbounded => true,
+                }
+            }
+        }
         impl Default for $id {
             fn default() -> Self {
                 Self::Limited($default_value)
@@ -391,9 +400,9 @@ macro_rules! optional_bound {
                 }
             }
         }
-        impl Into<Option<$underlying>> for $id {
-            fn into(self) -> Option<$underlying> {
-                match self {
+        impl From<$id> for Option<$underlying> {
+            fn from(v: $id) -> Option<$underlying> {
+                match v {
                     $id::Limited(v) => Some(v),
                     $id::Unbounded => None,
                 }

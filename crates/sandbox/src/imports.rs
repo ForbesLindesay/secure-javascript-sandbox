@@ -60,8 +60,7 @@ impl CustomImportMap for ImportMap {
                 Some(StaticImportSource::Url(url)) => Ok(ResolvedModule::Url(url.to_string())),
                 Some(StaticImportSource::File(_)) => Ok(ResolvedModule::Id(path)),
                 None => Err(anyhow::anyhow!(
-                    "Module {} not found in static import map",
-                    path
+                    "Module {path} not found in static import map"
                 )),
             },
         }

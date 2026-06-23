@@ -8,11 +8,11 @@ use wasmtime_wasi_http::{
     p2::{WasiHttpCtxView, WasiHttpHooks, WasiHttpView},
 };
 
-use crate::http::{Requests, send_request_handler};
+use crate::http::{OutboundRequest, send_request_handler};
 use crate::memory::MemoryLimits;
+use crate::shared_vec::SharedVec;
 use crate::{
-    CustomHttpMode, CustomImportMap, MemoryLimitBytes, RequestLimit, RequestValidationOutcome,
-    ResolvedModule, TableLimit,
+    CustomHttpMode, CustomImportMap, RequestLimit, RequestValidationOutcome, ResolvedModule,
 };
 
 pub(crate) struct SandboxState<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> {
@@ -50,7 +50,7 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> WasiHttpView
 }
 pub(crate) struct SandboxHttpState<THttpMode: CustomHttpMode> {
     pub request_count: usize,
-    pub requests: Requests,
+    pub requests: SharedVec<OutboundRequest>,
     pub request_limit: RequestLimit,
     pub http: THttpMode,
 }
@@ -62,10 +62,8 @@ impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
     ) -> wasmtime_wasi_http::p2::HttpResult<wasmtime_wasi_http::p2::types::HostFutureIncomingResponse>
     {
         self.request_count = self.request_count.saturating_add(1);
-        if let RequestLimit::Limited(max) = self.request_limit
-            && self.request_count > max
-        {
-            self.requests.push((
+        if !self.request_limit.is_within_bound(self.request_count) {
+            self.requests.push(OutboundRequest(
                 request.uri().clone(),
                 None,
                 RequestValidationOutcome::Blocked,
@@ -97,15 +95,15 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
         };
-        let allow = match self.memory_limits.memory_size_bytes {
-            MemoryLimitBytes::Limited(limit) if desired > limit => false,
-            _ => match maximum {
-                Some(max) if desired > max => false,
-                _ => true,
-            },
-        };
+        let allow = self
+            .memory_limits
+            .memory_size_bytes
+            .is_within_bound(desired)
+            && maximum.is_none_or(|max| desired <= max);
         if !allow && self.memory_limits.trap_on_grow_failure {
-            wasmtime::bail!("forcing trap when growing memory to {desired} bytes")
+            Err(wasmtime::format_err!(
+                "forcing trap when growing memory to {desired} bytes"
+            ))
         } else {
             Ok(allow)
         }
@@ -130,15 +128,12 @@ impl<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> ResourceLimiter
             Some(current_max) if desired < current_max => Some(current_max),
             _ => Some(desired),
         };
-        let allow = match self.memory_limits.table_elements {
-            TableLimit::Limited(limit) if desired > limit => false,
-            _ => match maximum {
-                Some(max) if desired > max => false,
-                _ => true,
-            },
-        };
+        let allow = self.memory_limits.table_elements.is_within_bound(desired)
+            && maximum.is_none_or(|max| desired <= max);
         if !allow && self.memory_limits.trap_on_grow_failure {
-            wasmtime::bail!("forcing trap when growing table to {desired} elements")
+            Err(wasmtime::format_err!(
+                "forcing trap when growing table to {desired} elements"
+            ))
         } else {
             Ok(allow)
         }

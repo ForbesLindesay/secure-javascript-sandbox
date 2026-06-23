@@ -5,8 +5,9 @@ use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
-use crate::http::{BlockAllHttp, Requests};
+use crate::http::BlockAllHttp;
 use crate::imports::ImportMapBlockAll;
+use crate::shared_vec::SharedVec;
 use crate::state::{SandboxHttpState, SandboxState};
 use crate::{CpuFuel, MemoryLimits, RequestLimit};
 
@@ -107,7 +108,7 @@ impl TsUtilsEngine {
                 http: SandboxHttpState {
                     http: BlockAllHttp,
                     request_limit: RequestLimit::Limited(0),
-                    requests: Requests::default(),
+                    requests: SharedVec::default(),
                     request_count: 0,
                 },
                 imports: ImportMapBlockAll,

@@ -11,7 +11,7 @@ mod ts_utils;
 pub use crate::env::get_env;
 pub use crate::evaluate::{create_evaluate_handler, evaluate};
 pub use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
-pub use crate::evaluate_response::{EvaluateResponse, OutboundRequest};
+pub use crate::evaluate_response::{EvaluateResponse, SerializableOutboundRequest};
 pub use crate::server_config::{
     AllowRequestToConfigureSandbox, CustomSandboxServerConfig, SandboxServerConfig,
     SandboxServerMemoryLimits,

@@ -7,10 +7,11 @@ mod ip_utils;
 mod limit_values;
 mod memory;
 mod sandbox;
+mod shared_vec;
 mod state;
 mod tsutils;
 
-pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
+pub use http::{CustomHttpMode, HttpMode, OutboundRequest, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
 
 pub use imports::{CustomImportMap, ImportMap, ResolvedModule, StaticImportSource};
