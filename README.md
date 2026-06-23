@@ -41,7 +41,7 @@ SANDBOX_API_REQUEST_BODY_LIMIT_BYTES="2MB"
 
 # How many CPU cycles to allow per request. This corresponds
 # to about 100ms on my 2024 MacBook Pro
-SANDBOX_CPU_FUEL="440_000_000"
+SANDBOX_CPU_FUEL="440M"
 # How much memory (in bytes) to allow each sandboxed function
 # to use. This includes the memory for the Spidermonkey VM
 # itself. Defaults to 128MB.
@@ -49,13 +49,13 @@ SANDBOX_CPU_FUEL="440_000_000"
 SANDBOX_MAX_MEMORY_BYTES="128MB"
 # Set a limit on the number of "tables elements" within the WASM VM
 # You can set this to "UNBOUNDED" to remove this limit.
-SANDBOX_MAX_TABLE_ELEMENTS="100_000"
+SANDBOX_MAX_TABLE_ELEMENTS="100K"
 # Set a limit on the number of "instances" within the WASM VM
-SANDBOX_MAX_INSTANCES="10_000"
+SANDBOX_MAX_INSTANCES="10K"
 # Set a limit on the number of "tables" within the WASM VM
-SANDBOX_MAX_TABLES="10_000"
+SANDBOX_MAX_TABLES="10K"
 # Set a limit on the number of "memories" within the WASM VM
-SANDBOX_MAX_MEMORIES="10_000"
+SANDBOX_MAX_MEMORIES="10K"
 # Enable this to throw a WASM error when running out of memory,
 # instead of the default JavaScript out of memory error.
 SANDBOX_TRAP_ON_GROW_FAILURE="false"
@@ -71,7 +71,7 @@ SANDBOX_STDERR_MAX_BYTES="10MB"
 SANDBOX_HTTP_MODE="BLOCK_ALL"
 # The maximum number of outbound HTTP requests per call to /evaluate
 # You can set this to "UNBOUNDED" to remove this limit.
-SANDBOX_REQUEST_LIMIT="1_000"
+SANDBOX_REQUEST_LIMIT="1K"
 # Enable this to automatically strip types before evaluating
 # the code passed to the "/evaluate" endpoint. This does incur
 # a small performance overhead.

@@ -8,7 +8,7 @@ use wasmtime_wasi_http::WasiHttpCtx;
 use crate::http::BlockAllHttp;
 use crate::imports::ImportMapBlockAll;
 use crate::state::{SandboxHttpState, SandboxState};
-use crate::{CpuFuel, MemoryLimits};
+use crate::{CpuFuel, MemoryLimits, RequestLimit};
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -119,7 +119,7 @@ impl TsUtilsEngine {
                 memory_limits: config.memory_limits,
                 http: SandboxHttpState {
                     http: BlockAllHttp,
-                    request_limit: 0.into(),
+                    request_limit: RequestLimit::Limited(0),
                     requests: Default::default(),
                     request_count: 0,
                 },

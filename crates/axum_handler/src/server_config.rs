@@ -159,7 +159,8 @@ impl SandboxServerConfig {
             request_limit: get_env("SANDBOX_REQUEST_LIMIT")?.unwrap_or_default(),
             import_map: import_map_from_env()?,
             sandbox_auto_strip_types: get_env("SANDBOX_AUTO_STRIP_TYPES")?.unwrap_or(false),
-            module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?.map(|str| str.into_boxed_str()),
+            module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?
+                .map(|str| str.into_boxed_str()),
         };
         config.memory_limits.set_from_env("SANDBOX")?;
         Ok(config)

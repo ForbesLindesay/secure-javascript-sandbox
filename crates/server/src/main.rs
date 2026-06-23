@@ -1,9 +1,6 @@
 #![deny(warnings)]
 
-use axum::{
-    Router,
-    routing::{get},
-};
+use axum::{Router, routing::get};
 use secure_js_sandbox_axum_handler::{
     AllowRequestToConfigureSandbox, SandboxServerConfig, TsUtilsHandler, create_evaluate_handler,
     create_strip_types_handler, create_validate_module_handler, get_env,
@@ -49,16 +46,10 @@ pub async fn start_server() -> anyhow::Result<()> {
     if enable_strip_types_endpoint || enable_validate_module_endpoint {
         let handler = TsUtilsHandler::from_env()?;
         if enable_strip_types_endpoint {
-            app = app.route(
-                "/strip_types",
-                create_strip_types_handler(handler.clone()),
-            );
+            app = app.route("/strip_types", create_strip_types_handler(handler.clone()));
         }
         if enable_validate_module_endpoint {
-            app = app.route(
-                "/validate_module",
-                create_validate_module_handler(handler),
-            );
+            app = app.route("/validate_module", create_validate_module_handler(handler));
         }
     }
 

@@ -117,6 +117,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_typescript_module_import() {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install default TLS provider");
         let config = SandboxConfig {
             mode: EvaluateMode::ModuleMethod("run".into()),
             strip_typescript_types: true,
