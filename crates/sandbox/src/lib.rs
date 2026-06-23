@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(warnings, clippy::all, clippy::pedantic, clippy::unwrap_used)]
 
 mod http;
 mod imports;

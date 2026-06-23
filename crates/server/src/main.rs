@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(warnings, clippy::all, clippy::pedantic, clippy::unwrap_used)]
 
 use axum::{Router, routing::get};
 use secure_js_sandbox_axum_handler::{

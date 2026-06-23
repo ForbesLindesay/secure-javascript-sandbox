@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![deny(warnings, clippy::all, clippy::pedantic, clippy::unwrap_used)]
 
 use std::{error::Error, time::Instant};
 use wasmtime::{Config, Engine};
@@ -31,7 +31,7 @@ fn compile(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
 
     eprintln!("Finished ({:?} elapsed)", start.elapsed());
 
-    println!("cargo:rerun-if-changed={}", input_path);
+    println!("cargo:rerun-if-changed={input_path}");
 
     Ok(())
 }

@@ -10,8 +10,8 @@
     "build": "node --run build:sandbox && cargo build",
     "build:release": "node --run build:sandbox && cargo build --release",
     "build:sandbox": "node --experimental-strip-types sandbox/build.mts --release",
-    "release": "node release.mjs",
-    "test": "node --experimental-strip-types tests/test.ts"
+    "release": "node --run test && node release.mjs",
+    "test": "cargo fmt && cargo clippy && cargo test && node --experimental-strip-types tests/test.ts"
   },
   "prettier": {
     "printWidth": 88,
