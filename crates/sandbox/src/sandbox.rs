@@ -5,6 +5,8 @@ use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{ResourceTable, WasiCtx};
 use wasmtime_wasi_http::WasiHttpCtx;
 
+use crate::http::OutboundRequest;
+use crate::shared_vec::SharedVec;
 use crate::state::{SandboxHttpState, SandboxState};
 use crate::{
     CpuFuel, CustomHttpMode, CustomImportMap, HttpMode, ImportMap, MemoryLimits, RequestLimit,
@@ -48,12 +50,12 @@ pub struct SandboxConfig<
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            cpu_fuel: Default::default(),
-            memory_limits: Default::default(),
-            http: Default::default(),
-            imports: Default::default(),
-            request_limit: Default::default(),
-            mode: Default::default(),
+            cpu_fuel: CpuFuel::default(),
+            memory_limits: MemoryLimits::default(),
+            http: HttpMode::default(),
+            imports: ImportMap::default(),
+            request_limit: RequestLimit::default(),
+            mode: EvaluateMode::default(),
             strip_typescript_types: false,
             filename: None,
         }
@@ -78,7 +80,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
 
         // An engine stores and configures global compilation settings like
         // optimization level, enabled wasm features, etc.
-        let engine = Engine::new(&engine_config).unwrap();
+        let engine = Engine::new(&engine_config)?;
         let mut linker: Linker<SandboxState<TImportMap, THttpMode>> = Linker::new(&engine);
 
         // Wasi Provides support for accessing system APIs from the sandbox.
@@ -126,7 +128,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
                 http: SandboxHttpState {
                     http,
                     request_limit,
-                    requests: Default::default(),
+                    requests: SharedVec::default(),
                     request_count: 0,
                 },
                 imports,
@@ -139,8 +141,8 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         let sandbox =
             bindings::Root::instantiate_async(&mut store, &self.component, &self.linker).await?;
         Ok(SandboxInstance {
-            store,
             sandbox,
+            store,
             stdout,
             stderr,
         })
@@ -211,13 +213,13 @@ impl fmt::Display for EvaluateError {
                         } else {
                             write!(f, "\n  ")?;
                         }
-                        write!(f, "{}", line)?;
+                        write!(f, "{line}")?;
                     }
                 }
                 Ok(())
             }
-            EvaluateError::WasmError(err) => write!(f, "Wasm error: {}", err),
-            EvaluateError::JsonError(err) => write!(f, "JSON error: {}", err),
+            EvaluateError::WasmError(err) => write!(f, "Wasm error: {err}"),
+            EvaluateError::JsonError(err) => write!(f, "JSON error: {err}"),
         }
     }
 }
@@ -291,7 +293,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
         parameters: &[serde_json::Value],
         options: &EvaluateOptions,
     ) -> SandboxEvaluationResult {
-        let parameters = match prepare_parameters(&parameters) {
+        let parameters = match prepare_parameters(parameters) {
             Ok(params) => params,
             Err(err) => {
                 return SandboxEvaluationResult {
@@ -310,7 +312,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                 self.sandbox
                     .call_evaluate(
                         &mut self.store,
-                        &code,
+                        code,
                         &parameters,
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
@@ -323,8 +325,8 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap>
                 self.sandbox
                     .call_evaluate_module(
                         &mut self.store,
-                        &code,
-                        &method,
+                        code,
+                        method,
                         &parameters,
                         &bindings::SandboxOptions {
                             strip_types: options.strip_typescript_types,
@@ -345,11 +347,7 @@ pub struct SandboxEvaluationResult {
     pub fuel_remaining: u64,
     pub max_requested_memory_bytes: Option<usize>,
     pub max_requested_table_elements: Option<usize>,
-    pub outbound_requests: Vec<(
-        hyper::Uri,
-        Option<std::net::SocketAddr>,
-        crate::RequestValidationOutcome,
-    )>,
+    pub outbound_requests: Vec<OutboundRequest>,
 }
 fn prepare_parameters(parameters: &[serde_json::Value]) -> Result<Vec<String>, EvaluateError> {
     let parameters: Vec<_> = parameters
@@ -359,10 +357,10 @@ fn prepare_parameters(parameters: &[serde_json::Value]) -> Result<Vec<String>, E
     Ok(parameters)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn take_memory_pipe_contents(pipe: MemoryOutputPipe) -> String {
     std::str::from_utf8(&pipe.contents())
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|_| "<invalid utf8 output>".to_string())
+        .map_or_else(|_| "<invalid utf8 output>".to_string(), ToOwned::to_owned)
 }
 
 // #[non_exhaustive]
@@ -383,13 +381,9 @@ impl Default for EvaluateOptions {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum EvaluateMode {
     ModuleMethod(Box<str>),
+    #[default]
     FunctionCall,
-}
-impl Default for EvaluateMode {
-    fn default() -> Self {
-        EvaluateMode::FunctionCall
-    }
 }

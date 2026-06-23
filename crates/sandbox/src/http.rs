@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::HeaderMap;
 use hyper::header::{self, HeaderValue};
 use hyper::{Method, Uri};
@@ -17,6 +18,7 @@ use wasmtime_wasi_http::p2::hyper_request_error;
 use wasmtime_wasi_http::p2::types::{IncomingResponse, OutgoingRequestConfig};
 
 use crate::ip_utils::IpUtils;
+use crate::shared_vec::SharedVec;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestValidationOutcome {
@@ -35,6 +37,12 @@ impl Serialize for RequestValidationOutcome {
     }
 }
 
+pub struct OutboundRequest(
+    pub hyper::Uri,
+    pub Option<std::net::SocketAddr>,
+    pub RequestValidationOutcome,
+);
+
 pub struct RequestHeaders<'a> {
     /// The request's method
     pub method: &'a Method,
@@ -44,28 +52,6 @@ pub struct RequestHeaders<'a> {
 
     /// The request's headers
     pub headers: &'a HeaderMap<HeaderValue>,
-}
-
-#[derive(Clone)]
-pub(crate) struct Requests {
-    inner: Arc<Mutex<Vec<(Uri, Option<SocketAddr>, RequestValidationOutcome)>>>,
-}
-
-impl Default for Requests {
-    fn default() -> Self {
-        Requests {
-            inner: Default::default(),
-        }
-    }
-}
-
-impl Requests {
-    pub fn push(&self, request: (Uri, Option<SocketAddr>, RequestValidationOutcome)) {
-        self.inner.lock().unwrap().push(request)
-    }
-    pub fn take(&self) -> Vec<(Uri, Option<SocketAddr>, RequestValidationOutcome)> {
-        std::mem::take(&mut *self.inner.lock().unwrap())
-    }
 }
 
 pub trait CustomHttpMode: Clone + Send + Sync + 'static {
@@ -84,18 +70,13 @@ impl CustomHttpMode for BlockAllHttp {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum HttpMode {
     AllowAll,
     AllowGlobalIpOnly,
     AllowListHosts(Arc<HashSet<String>>),
+    #[default]
     BlockAll,
-}
-
-impl Default for HttpMode {
-    fn default() -> Self {
-        HttpMode::BlockAll
-    }
 }
 
 #[derive(Deserialize)]
@@ -162,8 +143,7 @@ impl FromStr for HttpMode {
 impl CustomHttpMode for HttpMode {
     fn can_send_request(&self, request: RequestHeaders) -> bool {
         match self {
-            HttpMode::AllowAll => true,
-            HttpMode::AllowGlobalIpOnly => true,
+            HttpMode::AllowAll | HttpMode::AllowGlobalIpOnly => true,
             HttpMode::AllowListHosts(allowed_hosts) => {
                 if let Some(host) = request.uri.host() {
                     allowed_hosts.contains(host)
@@ -176,9 +156,8 @@ impl CustomHttpMode for HttpMode {
     }
     fn can_connect(&self, address: SocketAddr) -> bool {
         match self {
-            HttpMode::AllowAll => true,
+            HttpMode::AllowAll | HttpMode::AllowListHosts(_) => true,
             HttpMode::AllowGlobalIpOnly => address.ip().is_global_ext(),
-            HttpMode::AllowListHosts(_) => true,
             HttpMode::BlockAll => false,
         }
     }
@@ -187,6 +166,7 @@ impl CustomHttpMode for HttpMode {
 // Based on use wasmtime_wasi_http::types::default_send_request_handler;
 // but extracted to allow hooking in our own logic for allowing/blocking requests
 // and to handle redirects.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn send_request_handler(
     request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     OutgoingRequestConfig {
@@ -196,7 +176,7 @@ pub(crate) async fn send_request_handler(
         between_bytes_timeout,
     }: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
     http_mode: &impl CustomHttpMode,
-    requests: Requests,
+    requests: SharedVec<OutboundRequest>,
 ) -> Result<wasmtime_wasi_http::p2::types::IncomingResponse, ErrorCode> {
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
@@ -208,7 +188,7 @@ pub(crate) async fn send_request_handler(
             uri: request.uri(),
             headers: request.headers(),
         }) {
-            requests.push((
+            requests.push(OutboundRequest(
                 request.uri().clone(),
                 None,
                 RequestValidationOutcome::Blocked,
@@ -221,7 +201,7 @@ pub(crate) async fn send_request_handler(
                 authority.to_string()
             } else {
                 let port = if use_tls { 443 } else { 80 };
-                format!("{}:{port}", authority.to_string())
+                format!("{authority}:{port}")
             }
         } else {
             return Err(ErrorCode::HttpRequestUriInvalid);
@@ -240,7 +220,7 @@ pub(crate) async fn send_request_handler(
         .await
         .map_err(|_| ErrorCode::ConnectionTimeout)??;
         {
-            requests.push((
+            requests.push(OutboundRequest(
                 request.uri().clone(),
                 Some(socket_addr),
                 RequestValidationOutcome::Allowed,
@@ -257,7 +237,7 @@ pub(crate) async fn send_request_handler(
                 .with_root_certificates(root_cert_store)
                 .with_no_client_auth();
             let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
-            let mut parts = authority.split(":");
+            let mut parts = authority.split(':');
             let host = parts.next().unwrap_or(&authority);
             let domain = ServerName::try_from(host)
                 .map_err(|e| {
@@ -314,16 +294,12 @@ pub(crate) async fn send_request_handler(
         // at this point, the request contains the scheme and the authority, but
         // the http packet should only include those if addressing a proxy, so
         // remove them here, since SendRequest::send_request does not do it for us
-        *request.uri_mut() = Uri::builder()
-            .path_and_query(
-                request
-                    .uri()
-                    .path_and_query()
-                    .map(|p| p.as_str())
-                    .unwrap_or("/"),
-            )
-            .build()
-            .expect("comes from valid request");
+        *request.uri_mut() = match request.uri().path_and_query() {
+            Some(path) => Uri::builder().path_and_query(path.clone()),
+            None => Uri::builder().path_and_query("/"),
+        }
+        .build()
+        .expect("comes from valid request");
 
         let resp = timeout(first_byte_timeout, sender.send_request(request))
             .await
@@ -335,8 +311,8 @@ pub(crate) async fn send_request_handler(
             if redirect_count >= 20 {
                 return Err(ErrorCode::LoopDetected);
             }
-            let mut request = hyper::Request::from_parts(parts, Default::default());
-            if request.method() != &Method::GET && request.method() != &Method::HEAD {
+            let mut request = hyper::Request::from_parts(parts, UnsyncBoxBody::default());
+            if request.method() != Method::GET && request.method() != Method::HEAD {
                 *request.method_mut() = Method::GET;
                 request.headers_mut().remove(header::CONTENT_ENCODING);
                 request.headers_mut().remove(header::CONTENT_LANGUAGE);
@@ -366,7 +342,7 @@ async fn get_tcp_stream(
     uri: &Uri,
     authority: &str,
     http_mode: &impl CustomHttpMode,
-    requests: &Requests,
+    requests: &SharedVec<OutboundRequest>,
 ) -> Result<(TcpStream, SocketAddr), ErrorCode> {
     let hosts = lookup_host(&authority)
         .await
@@ -375,20 +351,34 @@ async fn get_tcp_stream(
     let mut last_err = None;
     for addr in hosts {
         if !http_mode.can_connect(addr) {
-            requests.push((uri.clone(), Some(addr), RequestValidationOutcome::Blocked));
+            requests.push(OutboundRequest(
+                uri.clone(),
+                Some(addr),
+                RequestValidationOutcome::Blocked,
+            ));
             return Err(ErrorCode::DestinationIpProhibited);
         }
         let tcp_stream = TcpStream::connect(addr).await;
         match tcp_stream {
-            Ok(stream) => return Ok((stream, addr)),
+            Ok(stream) => {
+                // Without set_zero_linger, the TCP stream will stay open for
+                // abut 60 seconds after the request finishes, causing outbound
+                // requests to fail once we run out of ephemeral TCP ports.
+                if let Err(err) = stream.set_zero_linger() {
+                    last_err = Some(err);
+                    continue;
+                }
+                return Ok((stream, addr));
+            }
             Err(err) => {
                 last_err = Some(err);
             }
         }
     }
 
-    return Err(last_err
-        .map(|e| match e.kind() {
+    Err(last_err.map_or_else(
+        || dns_error("address not available".to_string(), 0),
+        |e| match e.kind() {
             std::io::ErrorKind::AddrNotAvailable => {
                 dns_error("address not available".to_string(), 0)
             }
@@ -402,8 +392,8 @@ async fn get_tcp_stream(
                     ErrorCode::ConnectionRefused
                 }
             }
-        })
-        .unwrap_or_else(|| dns_error("address not available".to_string(), 0)));
+        },
+    ))
 }
 
 fn is_redirect_status(status: hyper::StatusCode) -> bool {

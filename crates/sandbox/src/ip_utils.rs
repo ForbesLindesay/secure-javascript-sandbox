@@ -26,7 +26,7 @@ impl IpUtilsV4Helper for std::net::Ipv4Addr {
         self.octets()[0] == 198 && (self.octets()[1] & 0xfe) == 18
     }
     fn is_reserved_ext(&self) -> bool {
-        self.octets()[0] & 240 == 240 && !self.is_broadcast()
+        self.octets()[0] & 0xF0 == 0xF0 && !self.is_broadcast()
     }
 }
 impl IpUtils for std::net::Ipv4Addr {
@@ -83,7 +83,7 @@ impl IpUtils for std::net::Ipv6Addr {
                     || matches!(self.segments(), [0x2001, 4, 0x112, _, _, _, _, _])
                     // ORCHIDv2 (`2001:20::/28`)
                     // Drone Remote ID Protocol Entity Tags (DETs) Prefix (`2001:30::/28`)`
-                    || matches!(self.segments(), [0x2001, b, _, _, _, _, _, _] if b >= 0x20 && b <= 0x3F)
+                    || matches!(self.segments(), [0x2001, b, _, _, _, _, _, _] if (0x20..=0x3F).contains(&b))
                 ))
             // 6to4 (`2002::/16`) – it's not explicitly documented as globally reachable,
             // IANA says N/A.

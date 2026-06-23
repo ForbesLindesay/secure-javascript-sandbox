@@ -1,4 +1,5 @@
-#![deny(warnings)]
+#![deny(warnings, clippy::all, clippy::pedantic, clippy::unwrap_used)]
+#![allow(clippy::missing_errors_doc, clippy::unused_async_trait_impl)]
 
 mod http;
 mod imports;
@@ -6,10 +7,11 @@ mod ip_utils;
 mod limit_values;
 mod memory;
 mod sandbox;
+mod shared_vec;
 mod state;
 mod tsutils;
 
-pub use http::{CustomHttpMode, HttpMode, RequestValidationOutcome};
+pub use http::{CustomHttpMode, HttpMode, OutboundRequest, RequestValidationOutcome};
 pub use hyper::{Request, Uri};
 
 pub use imports::{CustomImportMap, ImportMap, ResolvedModule, StaticImportSource};
@@ -117,6 +119,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_typescript_module_import() {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install default TLS provider");
         let config = SandboxConfig {
             mode: EvaluateMode::ModuleMethod("run".into()),
             strip_typescript_types: true,

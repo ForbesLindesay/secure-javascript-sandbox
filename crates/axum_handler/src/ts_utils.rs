@@ -47,6 +47,7 @@ pub struct StaticImport {
     has_star_import: bool,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Serialize)]
 #[serde(tag = "type")]
 pub enum ModuleExport {
@@ -82,7 +83,7 @@ pub struct TsUtilsHandler {
 }
 impl TsUtilsHandler {
     pub fn new(config: TsUtilsSandboxConfig) -> anyhow::Result<Self> {
-        Self::new_with_limit(Default::default(), config)
+        Self::new_with_limit(ApiRequestBodyLimit::default(), config)
     }
     pub fn new_with_limit(
         api_request_body_limit: ApiRequestBodyLimit,
@@ -111,6 +112,7 @@ impl TsUtilsHandler {
             config,
         )
     }
+    #[must_use]
     pub fn api_request_body_limit(&self) -> ApiRequestBodyLimit {
         self.api_request_body_limit
     }

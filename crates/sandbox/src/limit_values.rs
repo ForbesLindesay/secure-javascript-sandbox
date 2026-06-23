@@ -1,253 +1,309 @@
 use serde::{Deserialize, de::Visitor};
-use std::str::FromStr;
+use std::{marker::PhantomData, str::FromStr};
 
-enum Multiple {
-    Killo,
-    Mega,
-    Giga,
+#[derive(Clone, Copy)]
+enum ScalePrefix {
+    K,
+    M,
+    G,
 }
-impl TryFrom<char> for Multiple {
+impl ScalePrefix {
+    fn into_pow(self) -> u32 {
+        match self {
+            ScalePrefix::K => 1,
+            ScalePrefix::M => 2,
+            ScalePrefix::G => 3,
+        }
+    }
+    fn into_si_multiplier(self) -> u32 {
+        u32::pow(1000, self.into_pow())
+    }
+    fn into_byte_multiplier(self) -> u32 {
+        u32::pow(1024, self.into_pow())
+    }
+}
+impl TryFrom<char> for ScalePrefix {
     type Error = ();
     fn try_from(value: char) -> Result<Self, Self::Error> {
         match value {
-            'K' | 'k' => Ok(Multiple::Killo),
-            'M' | 'm' => Ok(Multiple::Mega),
-            'G' | 'g' => Ok(Multiple::Giga),
+            'K' | 'k' => Ok(ScalePrefix::K),
+            'M' | 'm' => Ok(ScalePrefix::M),
+            'G' | 'g' => Ok(ScalePrefix::G),
             _ => Err(()),
         }
     }
 }
 
-trait ValueSuffix: Default {
-    fn add_char(&mut self, c: char) -> Result<(), ()>;
-    fn finalize(self) -> Result<u32, ()>;
+trait SuffixParser {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()>;
 }
-struct MemorySuffix {
-    multiple: Option<Multiple>,
-    done: bool,
-}
-impl Default for MemorySuffix {
-    fn default() -> Self {
-        MemorySuffix {
-            multiple: None,
-            done: false,
-        }
+
+struct SuffixChars(Option<char>, Option<char>);
+impl SuffixChars {
+    fn new(a: char) -> Self {
+        SuffixChars(
+            match a {
+                ' ' => None,
+                c => Some(c),
+            },
+            None,
+        )
     }
 }
-impl ValueSuffix for MemorySuffix {
-    fn add_char(&mut self, c: char) -> Result<(), ()> {
-        if self.done {
-            Err(())
-        } else if c == 'B' || c == 'b' {
-            self.done = true;
+impl SuffixChars {
+    fn push(&mut self, c: char) -> Result<(), ()> {
+        if self.0.is_none() {
+            self.0 = Some(c);
             Ok(())
-        } else if self.multiple.is_some() {
-            Err(())
-        } else {
-            let m = Multiple::try_from(c)?;
-            self.multiple = Some(m);
+        } else if self.1.is_none() {
+            self.1 = Some(c);
             Ok(())
-        }
-    }
-    fn finalize(self) -> Result<u32, ()> {
-        if self.done {
-            match self.multiple {
-                Some(multiple) => {
-                    let multiple = match multiple {
-                        Multiple::Killo => 1024,
-                        Multiple::Mega => 1024 * 1024,
-                        Multiple::Giga => 1024 * 1024 * 1024,
-                    };
-                    Ok(multiple)
-                }
-                None => Ok(1),
-            }
         } else {
-            match self.multiple {
-                Some(_) => Err(()),
-                None => Ok(1),
-            }
+            Err(())
+        }
+    }
+    fn parse<T: SuffixParser>(self) -> Result<u32, ()> {
+        match self.0 {
+            Some(a) => T::parse(a, self.1),
+            None => Err(()),
         }
     }
 }
 
-struct NoSuffix;
-impl Default for NoSuffix {
-    fn default() -> Self {
-        NoSuffix
-    }
-}
-impl ValueSuffix for NoSuffix {
-    fn add_char(&mut self, _c: char) -> Result<(), ()> {
-        Err(())
-    }
-    fn finalize(self) -> Result<u32, ()> {
-        Ok(1)
-    }
-}
-
-trait Number {
-    type Value: Copy + std::fmt::Debug + Eq;
-    fn zero() -> Self::Value;
-    fn checked_mul(value: Self::Value, factor: u32) -> Option<Self::Value>;
-    fn checked_add_digit(value: Self::Value, digit: u32) -> Option<Self::Value>;
-    #[cfg(test)]
-    fn from_usize(value: usize) -> Result<Self::Value, ()>;
-}
-impl Number for usize {
-    type Value = usize;
-    #[inline]
-    fn zero() -> Self::Value {
-        0
-    }
-    #[inline]
-    fn checked_mul(value: Self::Value, factor: u32) -> Option<Self::Value> {
-        value.checked_mul(factor as usize)
-    }
-    #[inline]
-    fn checked_add_digit(value: Self::Value, digit: u32) -> Option<Self::Value> {
-        value.checked_add(digit as usize)
-    }
-    #[cfg(test)]
-    fn from_usize(value: usize) -> Result<Self::Value, ()> {
-        Ok(value)
-    }
-}
-impl Number for u64 {
-    type Value = u64;
-    #[inline]
-    fn zero() -> Self::Value {
-        0
-    }
-    #[inline]
-    fn checked_mul(value: Self::Value, factor: u32) -> Option<Self::Value> {
-        value.checked_mul(factor as u64)
-    }
-    #[inline]
-    fn checked_add_digit(value: Self::Value, digit: u32) -> Option<Self::Value> {
-        value.checked_add(digit as u64)
-    }
-    #[cfg(test)]
-    fn from_usize(value: usize) -> Result<Self::Value, ()> {
-        Ok(value as u64)
+struct MemorySuffix;
+impl SuffixParser for MemorySuffix {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+        match (a, b) {
+            ('B' | 'b', None) => Ok(1),
+            (scale_prefix, Some('B' | 'b')) => {
+                Ok(ScalePrefix::try_from(scale_prefix)?.into_byte_multiplier())
+            }
+            _ => Err(()),
+        }
     }
 }
 
-fn add_digit<TNumber: Number>(value: TNumber::Value, digit: char) -> Result<TNumber::Value, ()> {
-    digit
-        .to_digit(10)
-        .and_then(|digit| {
-            TNumber::checked_mul(value, 10).and_then(|r| TNumber::checked_add_digit(r, digit))
+struct NoUnitSuffix;
+impl SuffixParser for NoUnitSuffix {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+        if b.is_some() {
+            return Err(());
+        }
+        Ok(ScalePrefix::try_from(a)?.into_si_multiplier())
+    }
+}
+trait PositiveNumber:
+    Copy
+    + Sized
+    + std::fmt::Debug
+    + Eq
+    + TryFrom<u32>
+    + TryFrom<u64>
+    + TryFrom<i32>
+    + TryFrom<i64>
+    + std::fmt::Display
+{
+    fn mul(a: Self, b: Self) -> Option<Self>;
+    fn add(a: Self, b: Self) -> Option<Self>;
+}
+
+macro_rules! impl_number {
+    ($id:ident) => {
+        impl PositiveNumber for $id {
+            #[inline]
+            fn mul(a: Self, b: Self) -> Option<Self> {
+                a.checked_mul(b)
+            }
+            #[inline]
+            fn add(a: Self, b: Self) -> Option<Self> {
+                a.checked_add(b)
+            }
+        }
+    };
+}
+impl_number!(u64);
+impl_number!(usize);
+
+fn parse_number<TSuffix: SuffixParser, TResult: PositiveNumber>(value: &str) -> Option<TResult> {
+    let ten = TResult::try_from(10)
+        .ok()
+        .expect("Must be able to convert 10 to number type");
+
+    // Value must always start with a digit
+    let mut chars = value.chars();
+    let first_digit = chars.next()?.to_digit(10)?;
+    let mut value = TResult::try_from(first_digit).ok()?;
+    let mut got_separator = false;
+    let mut suffix: Option<SuffixChars> = None;
+
+    for char in chars {
+        if let Some(s) = &mut suffix {
+            s.push(char).ok()?;
+        } else if let Some(digit) = char.to_digit(10) {
+            if first_digit == 0 {
+                // Do not allow leading zeroes
+                return None;
+            }
+            got_separator = false;
+            value = TResult::add(TResult::mul(value, ten)?, TResult::try_from(digit).ok()?)?;
+        } else if char == '_' || char == ',' {
+            if got_separator {
+                // We don't allow two separators in a row
+                return None;
+            }
+            got_separator = true;
+        } else {
+            suffix = Some(SuffixChars::new(char));
+        }
+    }
+    if got_separator {
+        // We don't allow ending on a separator
+        return None;
+    }
+    if let Some(s) = suffix {
+        TResult::mul(value, TResult::try_from(s.parse::<TSuffix>().ok()?).ok()?)
+    } else {
+        Some(value)
+    }
+}
+
+struct NumberVisitor<TNumber: PositiveNumber, TResult: TryFrom<TNumber>> {
+    name: &'static str,
+    expected: &'static str,
+    number: PhantomData<TNumber>,
+    result: PhantomData<TResult>,
+}
+impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> NumberVisitor<TNumber, TResult> {
+    #[inline]
+    fn visit<TUnderlying, E>(&self, value: TUnderlying) -> Result<TResult, E>
+    where
+        TNumber: TryFrom<TUnderlying>,
+        E: serde::de::Error,
+    {
+        TNumber::try_from(value)
+            .ok()
+            .and_then(|v| TResult::try_from(v).ok())
+            .ok_or_else(|| {
+                E::custom(format!(
+                    "Invalid value for {}, expected {}",
+                    self.name, self.expected
+                ))
+            })
+    }
+}
+impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'_>
+    for NumberVisitor<TNumber, TResult>
+{
+    type Value = TResult;
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("")
+    }
+    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit(value)
+    }
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit(value)
+    }
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit(value)
+    }
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        value.parse().map_err(|_| {
+            E::custom(format!(
+                "Invalid value for {}, expected {}",
+                self.name, self.expected
+            ))
         })
-        .ok_or(())
-}
-fn parse_number<TSuffix: ValueSuffix, TResult: Number>(value: &str) -> Result<TResult::Value, ()> {
-    let mut suffix = TSuffix::default();
-    let mut result = TResult::zero();
-    let mut last_char = None;
-    let mut started_suffix = false;
-    for char in value.chars() {
-        // println!("last_char: {:?}", last_char);
-        // println!("char: {:?}", char);
-        // println!("started_suffix: {:?}", started_suffix);
-        // println!("result: {:?}", result);
-        if let Some(last_char) = last_char {
-            if started_suffix {
-                // Once we've started the suffix, we can only accept suffix characters
-                suffix.add_char(char)?;
-            } else if result == TResult::zero() {
-                // We have a char and it's zero, so it should be the only char other than an optional suffix
-                started_suffix = true;
-                if char != ' ' {
-                    suffix.add_char(char)?;
-                }
-            } else if last_char == ',' || last_char == '_' {
-                // After a separator, we require a digit
-                result = add_digit::<TResult>(result, char)?;
-            } else if char == ' ' {
-                // If there's a space, that must start the suffix
-                started_suffix = true;
-            } else if char == ',' || char == '_' {
-                // Separators are allowed between digits
-            } else {
-                match add_digit::<TResult>(result, char) {
-                    Ok(new_result) => {
-                        result = new_result;
-                    }
-                    Err(()) => {
-                        // If we fail to add a digit, that must mean the suffix is starting
-                        started_suffix = true;
-                        suffix.add_char(char)?;
-                    }
-                }
-            }
-        } else {
-            // Disallow suffix or separators without any digits
-            result = add_digit::<TResult>(result, char)?;
-        }
-        last_char = Some(char);
     }
-    if last_char.is_none_or(|c| c == ',' || c == '_' || c == ' ') {
-        return Err(());
-    }
-    TResult::checked_mul(result, suffix.finalize()?).ok_or(())
 }
 
 #[cfg(test)]
-fn test_parse_number_without_suffix<TSuffix: ValueSuffix, T: Number>() {
-    assert_eq!(parse_number::<TSuffix, T>("0"), T::from_usize(0));
-    assert_eq!(parse_number::<TSuffix, T>("1"), T::from_usize(1));
-    assert_eq!(parse_number::<TSuffix, T>("12,345"), T::from_usize(12_345));
+fn assert_parse_ok<TSuffix: SuffixParser, T: PositiveNumber>(
+    string_to_parse: &str,
+    parsed_number: u64,
+) {
     assert_eq!(
-        parse_number::<TSuffix, T>("1_000_000"),
-        T::from_usize(1_000_000)
+        parse_number::<TSuffix, T>(string_to_parse)
+            .expect(&format!("{} was not passed successfully", string_to_parse)),
+        T::try_from(parsed_number).ok().expect(&format!(
+            "{} can't be parsed to the right type",
+            parsed_number
+        ))
     );
+}
+
+#[cfg(test)]
+fn test_parse_number_without_suffix<TSuffix: SuffixParser, T: PositiveNumber>() {
+    assert_parse_ok::<TSuffix, T>("0", 0);
+    assert_parse_ok::<TSuffix, T>("0", 0);
+    assert_parse_ok::<TSuffix, T>("1", 1);
+    assert_parse_ok::<TSuffix, T>("12,345", 12_345);
+    assert_parse_ok::<TSuffix, T>("1_000_000", 1_000_000);
     assert!(
-        parse_number::<TSuffix, T>("").is_err(),
+        parse_number::<TSuffix, T>("").is_none(),
         "expected error parsing empty string"
     );
     assert!(
-        parse_number::<TSuffix, T>(",100").is_err(),
+        parse_number::<TSuffix, T>(",100").is_none(),
         "expected error parsing string starting with separator"
     );
     assert!(
-        parse_number::<TSuffix, T>("100,").is_err(),
+        parse_number::<TSuffix, T>("100,").is_none(),
         "expected error parsing string ending with separator"
     );
     assert!(
-        parse_number::<TSuffix, T>("01").is_err(),
+        parse_number::<TSuffix, T>("01").is_none(),
         "expected error parsing string with leading 0"
     );
     assert!(
-        parse_number::<TSuffix, T>("1 ").is_err(),
+        parse_number::<TSuffix, T>("1 ").is_none(),
         "expected error parsing string with trailing space"
     );
 }
 #[cfg(test)]
-fn test_parse_number_t<T: Number>() {
-    test_parse_number_without_suffix::<NoSuffix, T>();
+fn test_parse_number_t<T: PositiveNumber>() {
+    test_parse_number_without_suffix::<NoUnitSuffix, T>();
     test_parse_number_without_suffix::<MemorySuffix, T>();
 
-    assert_eq!(parse_number::<MemorySuffix, T>("0B"), T::from_usize(0));
-    assert_eq!(parse_number::<MemorySuffix, T>("0MB"), T::from_usize(0));
-    assert_eq!(parse_number::<MemorySuffix, T>("1B"), T::from_usize(1));
-    assert_eq!(parse_number::<MemorySuffix, T>("1KB"), T::from_usize(1024));
-    assert_eq!(parse_number::<MemorySuffix, T>("1 KB"), T::from_usize(1024));
-    assert_eq!(
-        parse_number::<MemorySuffix, T>("1,000 KB"),
-        T::from_usize(1024_000)
-    );
+    assert_parse_ok::<MemorySuffix, T>("0B", 0);
+    assert_parse_ok::<NoUnitSuffix, T>("0M", 0);
+    assert_parse_ok::<MemorySuffix, T>("0MB", 0);
+    assert_parse_ok::<MemorySuffix, T>("1B", 1);
+    assert_parse_ok::<NoUnitSuffix, T>("1K", 1000);
+    assert_parse_ok::<MemorySuffix, T>("1KB", 1024);
+    assert_parse_ok::<NoUnitSuffix, T>("2M", 2_000_000);
+    assert_parse_ok::<MemorySuffix, T>("2MB", 2_097_152);
+    assert_parse_ok::<MemorySuffix, T>("1 KB", 1024);
+    assert_parse_ok::<NoUnitSuffix, T>("1 K", 1000);
+    assert_parse_ok::<MemorySuffix, T>("1,000 KB", 1024_000);
+    assert_parse_ok::<NoUnitSuffix, T>("1,000 K", 1_000_000);
     assert!(
-        parse_number::<MemorySuffix, T>("1 K").is_err(),
+        parse_number::<MemorySuffix, T>("1 K").is_none(),
         "expected error parsing string with incomplete suffix"
     );
     assert!(
-        parse_number::<MemorySuffix, T>("1 KB ").is_err(),
+        parse_number::<MemorySuffix, T>("1 KB ").is_none(),
         "expected error parsing string with space after suffix"
     );
     assert!(
-        parse_number::<MemorySuffix, T>("1 KB,").is_err(),
+        parse_number::<MemorySuffix, T>("1 KB,").is_none(),
         "expected error parsing string with separator after suffix"
+    );
+    assert!(
+        parse_number::<NoUnitSuffix, T>("1KK").is_none(),
+        "expected error parsing string with duplicate suffix"
     );
 }
 
@@ -258,7 +314,7 @@ fn test_parse_number() {
 }
 
 macro_rules! number_type {
-    ($id:ident, $underlying:ident, $suffix:ident, name=$name:expr, expect=$expected:expr, default=$default_value:expr, min=$min_value:expr) => {
+    ($id:ident, $underlying:ty, $suffix:ident, name=$name:expr, expect=$expected:expr, default=$default_value:expr, min=$min_value:expr) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub struct $id(pub $underlying);
         impl Default for $id {
@@ -266,24 +322,26 @@ macro_rules! number_type {
                 Self($default_value)
             }
         }
-        impl From<$underlying> for $id {
-            fn from(value: $underlying) -> Self {
-                Self(value)
+        impl TryFrom<$underlying> for $id {
+            type Error = ();
+            fn try_from(value: $underlying) -> Result<Self, Self::Error> {
+                if value < $min_value {
+                    Err(())
+                } else {
+                    Ok(Self(value))
+                }
             }
         }
-        impl Into<$underlying> for $id {
-            fn into(self) -> $underlying {
-                self.0
+        impl From<$id> for $underlying {
+            fn from(v: $id) -> $underlying {
+                v.0
             }
         }
         impl FromStr for $id {
             type Err = ();
             fn from_str(value: &str) -> Result<Self, Self::Err> {
-                let limit = parse_number::<$suffix, $underlying>(value)?;
-                if limit < $min_value {
-                    return Err(());
-                }
-                Ok(Self(limit))
+                let limit = parse_number::<$suffix, $underlying>(value).ok_or(())?;
+                Self::try_from(limit)
             }
         }
         impl<'de> Deserialize<'de> for $id {
@@ -291,79 +349,60 @@ macro_rules! number_type {
             where
                 D: serde::Deserializer<'de>,
             {
-                struct SelfVisitor;
-                impl<'de> Visitor<'de> for SelfVisitor {
-                    type Value = $id;
-                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                        formatter.write_str($expected)
-                    }
-                    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        if value < $min_value {
-                            return Err(E::custom(format!(
-                                "{} must be at least {}",
-                                $name, $min_value
-                            )));
-                        }
-                        Ok($id(value as $underlying))
-                    }
-                    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        if value < $min_value {
-                            return Err(E::custom(format!(
-                                "{} must be at least {}",
-                                $name, $min_value
-                            )));
-                        }
-                        Ok($id(value as $underlying))
-                    }
-                    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        value
-                            .parse()
-                            .map_err(|_| E::custom(format!("expected {}", $expected)))
-                    }
-                }
-                deserializer.deserialize_any(SelfVisitor)
+                deserializer.deserialize_any(NumberVisitor::<$underlying, $id> {
+                    name: $name,
+                    expected: $expected,
+                    result: Default::default(),
+                    number: Default::default(),
+                })
             }
         }
     };
 }
 
 macro_rules! optional_bound {
-    ($id:ident, $underlying:ident, $suffix:ident, name=$name:expr, expect=$expected:expr, default=$default_value:expr, min=$min_value:expr) => {
+    ($id:ident, $underlying:ty, $suffix:ident, name=$name:expr, expect=$expected:expr, default=$default_value:expr, min=$min_value:expr) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum $id {
             Limited($underlying),
             Unbounded,
+        }
+        impl $id {
+            pub fn is_within_bound(&self, requested: $underlying) -> bool {
+                match self {
+                    Self::Limited(max) => *max >= requested,
+                    Self::Unbounded => true,
+                }
+            }
         }
         impl Default for $id {
             fn default() -> Self {
                 Self::Limited($default_value)
             }
         }
-        impl From<$underlying> for $id {
-            fn from(value: $underlying) -> Self {
-                Self::Limited(value)
-            }
-        }
-        impl From<Option<$underlying>> for $id {
-            fn from(value: Option<$underlying>) -> Self {
-                match value {
-                    Some(value) => Self::Limited(value),
-                    None => Self::Unbounded,
+        impl TryFrom<$underlying> for $id {
+            type Error = ();
+            #[allow(unused_comparisons)]
+            fn try_from(value: $underlying) -> Result<Self, Self::Error> {
+                if value < $min_value {
+                    Err(())
+                } else {
+                    Ok(Self::Limited(value))
                 }
             }
         }
-        impl Into<Option<$underlying>> for $id {
-            fn into(self) -> Option<$underlying> {
-                match self {
+        impl TryFrom<Option<$underlying>> for $id {
+            type Error = ();
+            fn try_from(value: Option<$underlying>) -> Result<Self, Self::Error> {
+                match value {
+                    Some(value) => Self::try_from(value),
+                    None => Ok(Self::Unbounded),
+                }
+            }
+        }
+        impl From<$id> for Option<$underlying> {
+            fn from(v: $id) -> Option<$underlying> {
+                match v {
                     $id::Limited(v) => Some(v),
                     $id::Unbounded => None,
                 }
@@ -371,16 +410,12 @@ macro_rules! optional_bound {
         }
         impl FromStr for $id {
             type Err = ();
-            #[allow(unused_comparisons)]
             fn from_str(value: &str) -> Result<Self, Self::Err> {
                 if value == "UNBOUNDED" {
                     Ok(Self::Unbounded)
                 } else {
-                    let limit = parse_number::<$suffix, $underlying>(value)?;
-                    if limit < $min_value {
-                        return Err(());
-                    }
-                    Ok(Self::Limited(limit))
+                    let limit = parse_number::<$suffix, $underlying>(value).ok_or(())?;
+                    Self::try_from(limit)
                 }
             }
         }
@@ -389,47 +424,12 @@ macro_rules! optional_bound {
             where
                 D: serde::Deserializer<'de>,
             {
-                struct SelfVisitor;
-                #[allow(unused_comparisons)]
-                impl<'de> Visitor<'de> for SelfVisitor {
-                    type Value = $id;
-                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                        formatter.write_str($expected)
-                    }
-                    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        if value < $min_value {
-                            return Err(E::custom(format!(
-                                "{} must be at least {}",
-                                $name, $min_value
-                            )));
-                        }
-                        Ok($id::Limited(value as $underlying))
-                    }
-                    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        if value < $min_value {
-                            return Err(E::custom(format!(
-                                "{} must be at least {}",
-                                $name, $min_value
-                            )));
-                        }
-                        Ok($id::Limited(value as $underlying))
-                    }
-                    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-                    where
-                        E: serde::de::Error,
-                    {
-                        value
-                            .parse()
-                            .map_err(|_| E::custom(format!("expected {}", $expected)))
-                    }
-                }
-                deserializer.deserialize_any(SelfVisitor)
+                deserializer.deserialize_any(NumberVisitor::<$underlying, $id> {
+                    name: $name,
+                    expected: $expected,
+                    result: Default::default(),
+                    number: Default::default(),
+                })
             }
         }
     };
@@ -447,7 +447,7 @@ number_type!(
 number_type!(
     ResourceLimit,
     usize,
-    NoSuffix,
+    NoUnitSuffix,
     name = "Resource Limit",
     expect = "a positive integer",
     default = 10_000,
@@ -456,7 +456,7 @@ number_type!(
 number_type!(
     CpuFuel,
     u64,
-    NoSuffix,
+    NoUnitSuffix,
     name = "CPU Fuel",
     expect = "a positive integer",
     default = 440_000_000,
@@ -485,7 +485,7 @@ optional_bound!(
 optional_bound!(
     TableLimit,
     usize,
-    NoSuffix,
+    NoUnitSuffix,
     name = "Table Limit",
     expect = "a positive integer or the string 'UNBOUNDED'",
     default = 100_000,
@@ -494,7 +494,7 @@ optional_bound!(
 optional_bound!(
     RequestLimit,
     usize,
-    NoSuffix,
+    NoUnitSuffix,
     name = "Request Limit",
     expect = "a positive integer or the string 'UNBOUNDED'",
     default = 1_000,

@@ -198,6 +198,11 @@ async function expectRun(
     max_requested_table_elements,
     ...result
   } = await run(input);
+  result.outbound_requests.forEach(req => {
+    req.socket_addr = req.socket_addr
+      ? req.socket_addr.replace(/^127\.0\.0\.1\:/, `[::1]:`)
+      : null;
+  });
   eq(result, expected);
 }
 async function expectStripTypes(input: string, expected: StripTypesResult) {
@@ -401,10 +406,10 @@ await expectRun(
 await expectRun(
   {
     code: `
-      export async function run() {
-        return await (await fetch('http://localhost:3001/to-redirect')).text()
-      }
-    `,
+          export async function run() {
+            return await (await fetch('http://localhost:3001/to-redirect')).text()
+          }
+        `,
     parameters: [],
   },
   {
@@ -427,6 +432,38 @@ await expectRun(
   },
 );
 
+{
+  let requestCount = 0;
+  console.log("Testing redirect following under heavy load");
+  await Promise.all(
+    Array.from({ length: 100 }).map(async () => {
+      for (let i = 0; i < 100; i++) {
+        const { result } = await run({
+          code: `
+              export async function run() {
+                let first = await (await fetch('http://localhost:3001/to-redirect')).text()
+                for (let i = 0; i < 9; i++) {
+                  if (first !== await (await fetch('http://localhost:3001/to-redirect')).text()) {
+                    return "Inconsistent results"
+                  }
+                }
+                return first
+              }
+            `,
+          parameters: [],
+        });
+        eq(result, "from-redirect");
+        requestCount++;
+        if (0 === requestCount % 100) {
+          process.stdout.write(".");
+        }
+      }
+    }),
+  );
+  process.stdout.write("\n");
+  console.log("Tested redirect following");
+}
+
 // Check IP addresses are allowed as well as DNS names
 await expectRun(
   {
@@ -441,7 +478,7 @@ await expectRun(
     outbound_requests: [
       {
         outcome: "ALLOWED",
-        socket_addr: "127.0.0.1:3001",
+        socket_addr: "[::1]:3001",
         uri: "http://127.0.0.1:3001/to-redirect",
       },
       {
@@ -571,7 +608,7 @@ await expectRun(
   for (const req of outbound_requests) {
     eq(req, {
       outcome: "ALLOWED",
-      socket_addr: "[::1]:3001",
+      socket_addr: req.socket_addr || "[::1]:3001",
       uri: "http://localhost:3001/fib.js",
     });
   }
