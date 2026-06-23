@@ -20,15 +20,11 @@ mod bindings {
 }
 pub use bindings::exports::local::ts_utils::ts_utils_impl::{ModuleExport, StaticImport};
 
-#[derive(Debug, Clone, Copy)]
+#[derive( Clone, Copy, Default, Debug)]
 pub enum ValidateModuleMode {
+    #[default]
     JavaScript,
     TypeScript,
-}
-impl Default for ValidateModuleMode {
-    fn default() -> Self {
-        ValidateModuleMode::JavaScript
-    }
 }
 impl<'a> Deserialize<'a> for ValidateModuleMode {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -53,20 +49,12 @@ pub struct ValidateModuleResult {
     pub exports: Vec<ModuleExport>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TsUtilsSandboxConfig {
     /// Limit of CPU instructions that can be executed in this sandbox.
     pub cpu_fuel: CpuFuel,
     /// Limit the memory that can be allocated by the sandbox.
     pub memory_limits: MemoryLimits,
-}
-impl Default for TsUtilsSandboxConfig {
-    fn default() -> Self {
-        Self {
-            cpu_fuel: Default::default(),
-            memory_limits: Default::default(),
-        }
-    }
 }
 
 pub struct TsUtilsEngine {

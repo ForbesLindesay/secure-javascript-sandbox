@@ -33,71 +33,62 @@ impl TryFrom<char> for ScalePrefix {
     }
 }
 
-trait ValueSuffix: Default {
-    fn add_char(&mut self, c: char) -> Result<(), ()>;
-    fn finalize(self) -> Result<u32, ()>;
-    // fn parse(a: char, b: Option<char>) -> Result<u32, ()>;
+trait SuffixParser {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()>;
 }
 
-struct MemorySuffix {
-    scale_prefix: Option<ScalePrefix>,
-    done: bool,
-}
-impl Default for MemorySuffix {
-    fn default() -> Self {
-        MemorySuffix {
-            scale_prefix: None,
-            done: false,
-        }
+struct SuffixChars(Option<char>, Option<char>);
+impl SuffixChars {
+    fn new(a: char) -> Self {
+        SuffixChars(
+            match a {
+                ' ' => None,
+                c => Some(c),
+            },
+            None,
+        )
     }
 }
-impl ValueSuffix for MemorySuffix {
-    fn add_char(&mut self, c: char) -> Result<(), ()> {
-        if self.done {
-            Err(())
-        } else if c == 'B' || c == 'b' {
-            self.done = true;
+impl SuffixChars {
+    fn push(&mut self, c: char) -> Result<(), ()> {
+        if self.0.is_none() {
+            self.0 = Some(c);
             Ok(())
-        } else if self.scale_prefix.is_some() {
-            Err(())
+        } else if self.1.is_none() {
+            self.1 = Some(c);
+            Ok(())
         } else {
-            self.scale_prefix = Some(ScalePrefix::try_from(c)?);
-            Ok(())
-        }
-    }
-    fn finalize(self) -> Result<u32, ()> {
-        if !self.done {
-            return Err(());
-        }
-        match self.scale_prefix {
-            Some(scale_prefix) => Ok(scale_prefix.to_byte_multiplier()),
-            None => Ok(1),
-        }
-    }
-}
-
-struct NoUnitSuffix {
-    scale_prefix: Option<ScalePrefix>,
-}
-impl Default for NoUnitSuffix {
-    fn default() -> Self {
-        NoUnitSuffix { scale_prefix: None }
-    }
-}
-impl ValueSuffix for NoUnitSuffix {
-    fn add_char(&mut self, c: char) -> Result<(), ()> {
-        if self.scale_prefix.is_some() {
             Err(())
-        } else {
-            self.scale_prefix = Some(ScalePrefix::try_from(c)?);
-            Ok(())
         }
     }
-    fn finalize(self) -> Result<u32, ()> {
-        match self.scale_prefix {
-            Some(scale_prefix) => Ok(scale_prefix.to_si_multiplier()),
+    fn parse<T: SuffixParser>(self) -> Result<u32, ()> {
+        match self.0 {
+            Some(a) => T::parse(a, self.1),
             None => Err(()),
         }
+    }
+}
+
+struct MemorySuffix;
+impl SuffixParser for MemorySuffix {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+        match (a, b) {
+            ('B' | 'b', None) => Ok(1),
+            (scale_prefix, Some('B' | 'b')) => {
+                Ok(ScalePrefix::try_from(scale_prefix)?.to_byte_multiplier())
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+struct NoUnitSuffix;
+impl SuffixParser for NoUnitSuffix {
+    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+        if b.is_some() {
+            return Err(());
+        }
+        Ok(ScalePrefix::try_from(a)?.to_si_multiplier())
     }
 }
 trait PositiveNumber:
@@ -132,7 +123,7 @@ macro_rules! impl_number {
 impl_number!(u64);
 impl_number!(usize);
 
-fn parse_number<TSuffix: ValueSuffix, TResult: PositiveNumber>(value: &str) -> Option<TResult> {
+fn parse_number<TSuffix: SuffixParser, TResult: PositiveNumber>(value: &str) -> Option<TResult> {
     let ten = TResult::try_from(10)
         .ok()
         .expect("Must be able to convert 10 to number type");
@@ -142,11 +133,11 @@ fn parse_number<TSuffix: ValueSuffix, TResult: PositiveNumber>(value: &str) -> O
     let first_digit = chars.next()?.to_digit(10)?;
     let mut value = TResult::try_from(first_digit).ok()?;
     let mut got_separator = false;
-    let mut suffix: Option<TSuffix> = None;
+    let mut suffix: Option<SuffixChars> = None;
 
     for char in chars {
         if let Some(s) = &mut suffix {
-            s.add_char(char).ok()?;
+            s.push(char).ok()?;
         } else if let Some(digit) = char.to_digit(10) {
             if first_digit == 0 {
                 // Do not allow leading zeroes
@@ -161,11 +152,7 @@ fn parse_number<TSuffix: ValueSuffix, TResult: PositiveNumber>(value: &str) -> O
             }
             got_separator = true;
         } else {
-            let mut s = TSuffix::default();
-            if char != ' ' {
-                s.add_char(char).ok()?;
-            }
-            suffix = Some(s);
+            suffix = Some(SuffixChars::new(char));
         }
     }
     if got_separator {
@@ -173,7 +160,7 @@ fn parse_number<TSuffix: ValueSuffix, TResult: PositiveNumber>(value: &str) -> O
         return None;
     }
     if let Some(s) = suffix {
-        TResult::mul(value, TResult::try_from(s.finalize().ok()?).ok()?)
+        TResult::mul(value, TResult::try_from(s.parse::<TSuffix>().ok()?).ok()?)
     } else {
         Some(value)
     }
@@ -242,7 +229,7 @@ impl<'de, TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<
 }
 
 #[cfg(test)]
-fn assert_parse_ok<TSuffix: ValueSuffix, T: PositiveNumber>(
+fn assert_parse_ok<TSuffix: SuffixParser, T: PositiveNumber>(
     string_to_parse: &str,
     parsed_number: u64,
 ) {
@@ -257,7 +244,7 @@ fn assert_parse_ok<TSuffix: ValueSuffix, T: PositiveNumber>(
 }
 
 #[cfg(test)]
-fn test_parse_number_without_suffix<TSuffix: ValueSuffix, T: PositiveNumber>() {
+fn test_parse_number_without_suffix<TSuffix: SuffixParser, T: PositiveNumber>() {
     assert_parse_ok::<TSuffix, T>("0", 0);
     assert_parse_ok::<TSuffix, T>("0", 0);
     assert_parse_ok::<TSuffix, T>("1", 1);
