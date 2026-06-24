@@ -433,6 +433,7 @@ await expectRun(
 );
 
 {
+  const start = Date.now();
   let requestCount = 0;
   console.log("Testing redirect following under heavy load");
   await Promise.all(
@@ -461,7 +462,10 @@ await expectRun(
     }),
   );
   process.stdout.write("\n");
-  console.log("Tested redirect following");
+  const end = Date.now();
+  console.log(
+    `Tested redirect following: ${(requestCount / ((end - start) / 1_000)).toFixed(3)} function calls per second`,
+  );
 }
 
 // Check IP addresses are allowed as well as DNS names
