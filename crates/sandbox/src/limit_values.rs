@@ -6,36 +6,36 @@ enum ScalePrefix {
     K,
     M,
     G,
+    T,
 }
 impl ScalePrefix {
+    fn parse_char(value: char) -> Option<ScalePrefix> {
+        match value {
+            'K' | 'k' => Some(ScalePrefix::K),
+            'M' | 'm' => Some(ScalePrefix::M),
+            'G' | 'g' => Some(ScalePrefix::G),
+            'T' | 't' => Some(ScalePrefix::T),
+            _ => None,
+        }
+    }
     fn into_pow(self) -> u32 {
         match self {
             ScalePrefix::K => 1,
             ScalePrefix::M => 2,
             ScalePrefix::G => 3,
+            ScalePrefix::T => 4,
         }
     }
-    fn into_si_multiplier(self) -> u32 {
-        u32::pow(1000, self.into_pow())
+    fn into_si_multiplier(self) -> u64 {
+        u64::pow(1000, self.into_pow())
     }
-    fn into_byte_multiplier(self) -> u32 {
-        u32::pow(1024, self.into_pow())
-    }
-}
-impl TryFrom<char> for ScalePrefix {
-    type Error = ();
-    fn try_from(value: char) -> Result<Self, Self::Error> {
-        match value {
-            'K' | 'k' => Ok(ScalePrefix::K),
-            'M' | 'm' => Ok(ScalePrefix::M),
-            'G' | 'g' => Ok(ScalePrefix::G),
-            _ => Err(()),
-        }
+    fn into_byte_multiplier(self) -> u64 {
+        u64::pow(1024, self.into_pow())
     }
 }
 
 trait SuffixParser {
-    fn parse(a: char, b: Option<char>) -> Result<u32, ()>;
+    fn parse(a: char, b: Option<char>) -> Option<u64>;
 }
 
 struct SuffixChars(Option<char>, Option<char>);
@@ -62,34 +62,34 @@ impl SuffixChars {
             Err(())
         }
     }
-    fn parse<T: SuffixParser>(self) -> Result<u32, ()> {
+    fn parse<T: SuffixParser>(self) -> Option<u64> {
         match self.0 {
             Some(a) => T::parse(a, self.1),
-            None => Err(()),
+            None => None,
         }
     }
 }
 
 struct MemorySuffix;
 impl SuffixParser for MemorySuffix {
-    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+    fn parse(a: char, b: Option<char>) -> Option<u64> {
         match (a, b) {
-            ('B' | 'b', None) => Ok(1),
+            ('B' | 'b', None) => Some(1),
             (scale_prefix, Some('B' | 'b')) => {
-                Ok(ScalePrefix::try_from(scale_prefix)?.into_byte_multiplier())
+                Some(ScalePrefix::parse_char(scale_prefix)?.into_byte_multiplier())
             }
-            _ => Err(()),
+            _ => None,
         }
     }
 }
 
 struct NoUnitSuffix;
 impl SuffixParser for NoUnitSuffix {
-    fn parse(a: char, b: Option<char>) -> Result<u32, ()> {
+    fn parse(a: char, b: Option<char>) -> Option<u64> {
         if b.is_some() {
-            return Err(());
+            return None;
         }
-        Ok(ScalePrefix::try_from(a)?.into_si_multiplier())
+        Some(ScalePrefix::parse_char(a)?.into_si_multiplier())
     }
 }
 trait PositiveNumber:
@@ -103,50 +103,43 @@ trait PositiveNumber:
     + TryFrom<i64>
     + std::fmt::Display
 {
-    fn mul(a: Self, b: Self) -> Option<Self>;
-    fn add(a: Self, b: Self) -> Option<Self>;
 }
+impl PositiveNumber for u32 {}
+impl PositiveNumber for u64 {}
+impl PositiveNumber for usize {}
 
-macro_rules! impl_number {
-    ($id:ident) => {
-        impl PositiveNumber for $id {
-            #[inline]
-            fn mul(a: Self, b: Self) -> Option<Self> {
-                a.checked_mul(b)
-            }
-            #[inline]
-            fn add(a: Self, b: Self) -> Option<Self> {
-                a.checked_add(b)
-            }
-        }
-    };
-}
-impl_number!(u64);
-impl_number!(usize);
-
-fn parse_number<TSuffix: SuffixParser, TResult: PositiveNumber>(value: &str) -> Option<TResult> {
-    let ten = TResult::try_from(10)
-        .ok()
-        .expect("Must be able to convert 10 to number type");
-
+fn parse_number_parts(value: &str) -> Option<(u64, u64, Option<SuffixChars>)> {
     // Value must always start with a digit
     let mut chars = value.chars();
     let first_digit = chars.next()?.to_digit(10)?;
-    let mut value = TResult::try_from(first_digit).ok()?;
+    let mut value: u64 = first_digit.into();
     let mut got_separator = false;
+
+    let mut got_decimal = false;
+    let mut decimal_places: u32 = 0;
+
     let mut suffix: Option<SuffixChars> = None;
 
     for char in chars {
         if let Some(s) = &mut suffix {
             s.push(char).ok()?;
         } else if let Some(digit) = char.to_digit(10) {
-            if first_digit == 0 {
+            if got_decimal {
+                decimal_places = decimal_places.checked_add(1)?;
+            } else if first_digit == 0 {
                 // Do not allow leading zeroes
                 return None;
             }
             got_separator = false;
-            value = TResult::add(TResult::mul(value, ten)?, TResult::try_from(digit).ok()?)?;
-        } else if char == '_' || char == ',' {
+            value = value.checked_mul(10)?.checked_add(digit.into())?;
+        } else if char == '_' || char == ',' || char == '.' {
+            if char == '.' {
+                if got_decimal {
+                    // You can't have more than one decimal separator
+                    return None;
+                }
+                got_decimal = true;
+            }
             if got_separator {
                 // We don't allow two separators in a row
                 return None;
@@ -160,11 +153,37 @@ fn parse_number<TSuffix: SuffixParser, TResult: PositiveNumber>(value: &str) -> 
         // We don't allow ending on a separator
         return None;
     }
-    if let Some(s) = suffix {
-        TResult::mul(value, TResult::try_from(s.parse::<TSuffix>().ok()?).ok()?)
-    } else {
-        Some(value)
+    if got_decimal && decimal_places == 0 {
+        return None;
     }
+    Some((value, u64::pow(10, decimal_places), suffix))
+}
+
+fn parse_u64<TSuffix: SuffixParser>(value: &str) -> Option<u64> {
+    let (result, decimal_divisor, suffix_chars) = parse_number_parts(value)?;
+    let suffix_multiplier = if let Some(s) = suffix_chars {
+        s.parse::<TSuffix>()?
+    } else {
+        1
+    };
+    if decimal_divisor > suffix_multiplier {
+        return None;
+    }
+    result
+        .checked_mul(suffix_multiplier)?
+        .checked_div(decimal_divisor)
+}
+
+fn parse_number<
+    TSuffix: SuffixParser,
+    TUnderlying: TryFrom<u64>,
+    TWrapped: TryFrom<TUnderlying>,
+>(
+    value: &str,
+) -> Result<TWrapped, ()> {
+    let numeric_value = parse_u64::<TSuffix>(value).ok_or(())?;
+    let underlying = TUnderlying::try_from(numeric_value).map_err(|_| ())?;
+    TWrapped::try_from(underlying).map_err(|_| ())
 }
 
 struct NumberVisitor<TNumber: PositiveNumber, TResult: TryFrom<TNumber>> {
@@ -196,7 +215,7 @@ impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'_>
 {
     type Value = TResult;
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("")
+        formatter.write_str(self.expected)
     }
     fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
     where
@@ -230,87 +249,84 @@ impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'_>
 }
 
 #[cfg(test)]
-fn assert_parse_ok<TSuffix: SuffixParser, T: PositiveNumber>(
-    string_to_parse: &str,
-    parsed_number: u64,
-) {
+fn assert_parse_ok<TSuffix: SuffixParser>(string_to_parse: &str, parsed_number: u64) {
     assert_eq!(
-        parse_number::<TSuffix, T>(string_to_parse)
+        parse_u64::<TSuffix>(string_to_parse)
             .expect(&format!("{} was not passed successfully", string_to_parse)),
-        T::try_from(parsed_number).ok().expect(&format!(
-            "{} can't be parsed to the right type",
-            parsed_number
-        ))
+        parsed_number
     );
 }
 
 #[cfg(test)]
-fn test_parse_number_without_suffix<TSuffix: SuffixParser, T: PositiveNumber>() {
-    assert_parse_ok::<TSuffix, T>("0", 0);
-    assert_parse_ok::<TSuffix, T>("0", 0);
-    assert_parse_ok::<TSuffix, T>("1", 1);
-    assert_parse_ok::<TSuffix, T>("12,345", 12_345);
-    assert_parse_ok::<TSuffix, T>("1_000_000", 1_000_000);
+fn test_parse_number_without_suffix<TSuffix: SuffixParser>() {
+    assert_parse_ok::<TSuffix>("0", 0);
+    assert_parse_ok::<TSuffix>("0", 0);
+    assert_parse_ok::<TSuffix>("1", 1);
+    assert_parse_ok::<TSuffix>("12,345", 12_345);
+    assert_parse_ok::<TSuffix>("1_000_000", 1_000_000);
     assert!(
-        parse_number::<TSuffix, T>("").is_none(),
+        parse_u64::<TSuffix>("").is_none(),
         "expected error parsing empty string"
     );
     assert!(
-        parse_number::<TSuffix, T>(",100").is_none(),
+        parse_u64::<TSuffix>(",100").is_none(),
         "expected error parsing string starting with separator"
     );
     assert!(
-        parse_number::<TSuffix, T>("100,").is_none(),
+        parse_u64::<TSuffix>("100,").is_none(),
         "expected error parsing string ending with separator"
     );
     assert!(
-        parse_number::<TSuffix, T>("01").is_none(),
+        parse_u64::<TSuffix>("01").is_none(),
         "expected error parsing string with leading 0"
     );
     assert!(
-        parse_number::<TSuffix, T>("1 ").is_none(),
+        parse_u64::<TSuffix>("1 ").is_none(),
         "expected error parsing string with trailing space"
-    );
-}
-#[cfg(test)]
-fn test_parse_number_t<T: PositiveNumber>() {
-    test_parse_number_without_suffix::<NoUnitSuffix, T>();
-    test_parse_number_without_suffix::<MemorySuffix, T>();
-
-    assert_parse_ok::<MemorySuffix, T>("0B", 0);
-    assert_parse_ok::<NoUnitSuffix, T>("0M", 0);
-    assert_parse_ok::<MemorySuffix, T>("0MB", 0);
-    assert_parse_ok::<MemorySuffix, T>("1B", 1);
-    assert_parse_ok::<NoUnitSuffix, T>("1K", 1000);
-    assert_parse_ok::<MemorySuffix, T>("1KB", 1024);
-    assert_parse_ok::<NoUnitSuffix, T>("2M", 2_000_000);
-    assert_parse_ok::<MemorySuffix, T>("2MB", 2_097_152);
-    assert_parse_ok::<MemorySuffix, T>("1 KB", 1024);
-    assert_parse_ok::<NoUnitSuffix, T>("1 K", 1000);
-    assert_parse_ok::<MemorySuffix, T>("1,000 KB", 1024_000);
-    assert_parse_ok::<NoUnitSuffix, T>("1,000 K", 1_000_000);
-    assert!(
-        parse_number::<MemorySuffix, T>("1 K").is_none(),
-        "expected error parsing string with incomplete suffix"
-    );
-    assert!(
-        parse_number::<MemorySuffix, T>("1 KB ").is_none(),
-        "expected error parsing string with space after suffix"
-    );
-    assert!(
-        parse_number::<MemorySuffix, T>("1 KB,").is_none(),
-        "expected error parsing string with separator after suffix"
-    );
-    assert!(
-        parse_number::<NoUnitSuffix, T>("1KK").is_none(),
-        "expected error parsing string with duplicate suffix"
     );
 }
 
 #[test]
 fn test_parse_number() {
-    test_parse_number_t::<usize>();
-    test_parse_number_t::<u64>();
+    test_parse_number_without_suffix::<NoUnitSuffix>();
+    test_parse_number_without_suffix::<MemorySuffix>();
+
+    assert_parse_ok::<MemorySuffix>("0B", 0);
+    assert_parse_ok::<NoUnitSuffix>("0M", 0);
+    assert_parse_ok::<MemorySuffix>("0MB", 0);
+    assert_parse_ok::<MemorySuffix>("1B", 1);
+    assert_parse_ok::<NoUnitSuffix>("1K", 1000);
+    assert_parse_ok::<MemorySuffix>("1KB", 1024);
+    assert_parse_ok::<NoUnitSuffix>("2M", 2_000_000);
+    assert_parse_ok::<MemorySuffix>("2MB", 2_097_152);
+    assert_parse_ok::<MemorySuffix>("1 KB", 1024);
+    assert_parse_ok::<NoUnitSuffix>("1 K", 1000);
+    assert_parse_ok::<MemorySuffix>("1,000 KB", 1024_000);
+    assert_parse_ok::<NoUnitSuffix>("1,000 K", 1_000_000);
+    assert_parse_ok::<MemorySuffix>("2.5 GB", 2_684_354_560);
+    assert_parse_ok::<NoUnitSuffix>("2.5 G", 2_500_000_000);
+    assert_parse_ok::<MemorySuffix>("2.5 TB", 2_748_779_069_440);
+    assert_parse_ok::<NoUnitSuffix>("2.5 T", 2_500_000_000_000);
+    assert!(
+        parse_u64::<MemorySuffix>("1 K").is_none(),
+        "expected error parsing string with incomplete suffix"
+    );
+    assert!(
+        parse_u64::<MemorySuffix>("1 KB ").is_none(),
+        "expected error parsing string with space after suffix"
+    );
+    assert!(
+        parse_u64::<MemorySuffix>("1 KB,").is_none(),
+        "expected error parsing string with separator after suffix"
+    );
+    assert!(
+        parse_u64::<NoUnitSuffix>("1KK").is_none(),
+        "expected error parsing string with duplicate suffix"
+    );
+    assert!(
+        parse_u64::<NoUnitSuffix>("1.5006K").is_none(),
+        "expected error parsing with more decimal places than the unit allows"
+    );
 }
 
 macro_rules! number_type {
@@ -340,8 +356,7 @@ macro_rules! number_type {
         impl FromStr for $id {
             type Err = ();
             fn from_str(value: &str) -> Result<Self, Self::Err> {
-                let limit = parse_number::<$suffix, $underlying>(value).ok_or(())?;
-                Self::try_from(limit)
+                parse_number::<$suffix, $underlying, Self>(value)
             }
         }
         impl<'de> Deserialize<'de> for $id {
@@ -414,8 +429,7 @@ macro_rules! optional_bound {
                 if value == "UNBOUNDED" {
                     Ok(Self::Unbounded)
                 } else {
-                    let limit = parse_number::<$suffix, $underlying>(value).ok_or(())?;
-                    Self::try_from(limit)
+                    parse_number::<$suffix, $underlying, Self>(value)
                 }
             }
         }
