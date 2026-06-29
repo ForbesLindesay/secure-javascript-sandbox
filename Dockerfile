@@ -10,10 +10,9 @@ COPY ./crates ./crates
 
 # RUN cargo build --bin secure_js_sandbox_interpreter_boa --release --target wasm32-wasip2
 RUN cargo build --release
-RUN cargo install --path crates/server
 
 FROM debian:trixie-slim@sha256:4e401d95de7083948053197a9c3913343cd06b706bf15eb6a0c3ccd26f436a0e
 
 # RUN apt-get update && apt-get install -y extra-runtime-dependencies && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/cargo/bin/secure_js_sandbox_server /usr/local/bin/secure_js_sandbox_server
+COPY --from=builder /usr/src/secure-javascript-sandbox/target/release/secure_js_sandbox_server /usr/local/bin/secure_js_sandbox_server
 ENTRYPOINT ["secure_js_sandbox_server"]
