@@ -1,9 +1,10 @@
 use std::fmt;
+use std::time::Duration;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{ResourceTable, WasiCtx};
-use wasmtime_wasi_http::WasiHttpCtx;
+use wasmtime_wasi_http::{RequestOptions, WasiHttpCtx};
 
 use crate::http::OutboundRequest;
 use crate::shared_vec::SharedVec;
@@ -41,6 +42,8 @@ pub struct SandboxConfig<
     pub imports: TImportMap,
     /// Limit the number of outbound HTTP requests that can be made.
     pub request_limit: RequestLimit,
+    /// Limit the maximum timeouts that can be set for outbound HTTP requests
+    pub request_timeouts: RequestTimeouts,
     /// Evaluate as a module by calling an exported method, or as a function expression.
     pub mode: EvaluateMode,
     /// Whether to strip TypeScript type annotations from the code before evaluating - if it's a module, only the initial module has types stripped.
@@ -55,9 +58,46 @@ impl Default for SandboxConfig {
             http: HttpMode::default(),
             imports: ImportMap::default(),
             request_limit: RequestLimit::default(),
+            request_timeouts: RequestTimeouts::default(),
             mode: EvaluateMode::default(),
             strip_typescript_types: false,
             filename: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RequestTimeouts {
+    /// How long to wait for a connection to be established.
+    pub connect_timeout: Duration,
+    /// How long to wait for the first byte of the response body.
+    pub first_byte_timeout: Duration,
+    /// How long to wait between frames of the response body.
+    pub between_bytes_timeout: Duration,
+}
+impl RequestTimeouts {
+    /// Apply any timeouts requested by the guest, without exceeding these limits.
+    #[must_use]
+    pub(crate) fn limit(self, options: Option<RequestOptions>) -> Self {
+        let Some(options) = options else {
+            return self;
+        };
+        let min = |limit: Duration, requested: Option<Duration>| {
+            requested.map_or(limit, |requested| requested.min(limit))
+        };
+        Self {
+            connect_timeout: min(self.connect_timeout, options.connect_timeout),
+            first_byte_timeout: min(self.first_byte_timeout, options.first_byte_timeout),
+            between_bytes_timeout: min(self.between_bytes_timeout, options.between_bytes_timeout),
+        }
+    }
+}
+impl Default for RequestTimeouts {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_mins(10),
+            first_byte_timeout: Duration::from_mins(10),
+            between_bytes_timeout: Duration::from_mins(10),
         }
     }
 }
@@ -111,6 +151,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
         http: THttpMode,
         imports: TImportMap,
         request_limit: RequestLimit,
+        request_timeouts: RequestTimeouts,
     ) -> wasmtime::Result<SandboxInstance<THttpMode, TImportMap>> {
         let stdout = MemoryOutputPipe::new(memory_limits.stdout_bytes.into());
         let stderr = MemoryOutputPipe::new(memory_limits.stderr_bytes.into());
@@ -128,6 +169,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
                 http: SandboxHttpState {
                     http,
                     request_limit,
+                    request_timeouts,
                     requests: SharedVec::default(),
                     request_count: 0,
                 },
@@ -160,6 +202,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap> SandboxEngine<THttp
                 config.http,
                 config.imports,
                 config.request_limit,
+                config.request_timeouts,
             )
             .await
         {
@@ -386,4 +429,27 @@ pub enum EvaluateMode {
     ModuleMethod(Box<str>),
     #[default]
     FunctionCall,
+}
+
+#[test]
+fn test_request_timeouts_limit() {
+    let limits = RequestTimeouts {
+        connect_timeout: Duration::from_secs(10),
+        first_byte_timeout: Duration::from_secs(20),
+        between_bytes_timeout: Duration::from_secs(30),
+    };
+    assert_eq!(limits.limit(None), limits);
+    assert_eq!(limits.limit(Some(RequestOptions::default())), limits);
+    assert_eq!(
+        limits.limit(Some(RequestOptions {
+            connect_timeout: Some(Duration::from_secs(5)),
+            first_byte_timeout: Some(Duration::from_secs(60)),
+            between_bytes_timeout: None,
+        })),
+        RequestTimeouts {
+            connect_timeout: Duration::from_secs(5),
+            first_byte_timeout: Duration::from_secs(20),
+            between_bytes_timeout: Duration::from_secs(30),
+        }
+    );
 }

@@ -9,7 +9,7 @@ use crate::http::BlockAllHttp;
 use crate::imports::ImportMapBlockAll;
 use crate::shared_vec::SharedVec;
 use crate::state::{SandboxHttpState, SandboxState};
-use crate::{CpuFuel, MemoryLimits, RequestLimit};
+use crate::{CpuFuel, MemoryLimits, RequestLimit, RequestTimeouts};
 
 mod bindings {
     wasmtime::component::bindgen!({
@@ -108,6 +108,7 @@ impl TsUtilsEngine {
                 http: SandboxHttpState {
                     http: BlockAllHttp,
                     request_limit: RequestLimit::Limited(0),
+                    request_timeouts: RequestTimeouts::default(),
                     requests: SharedVec::default(),
                     request_count: 0,
                 },

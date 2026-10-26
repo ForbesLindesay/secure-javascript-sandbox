@@ -14,7 +14,7 @@ pub use crate::evaluate_request::{EvaluateRequest, EvaluateRequestWithConfig};
 pub use crate::evaluate_response::{EvaluateResponse, SerializableOutboundRequest};
 pub use crate::server_config::{
     AllowRequestToConfigureSandbox, CustomSandboxServerConfig, SandboxServerConfig,
-    SandboxServerMemoryLimits,
+    SandboxServerMemoryLimits, SandboxServerRequestTimeouts,
 };
 pub use crate::ts_utils::{
     StripTypesRequest, StripTypesResponse, StripTypesResponseSuccess, TsResponseFailure,

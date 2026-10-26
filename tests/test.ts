@@ -69,6 +69,19 @@ const server = createServer((req, res) => {
     );
     return;
   }
+  if (req.url === "/slow-headers") {
+    setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("slow-headers");
+    }, 1_000);
+    return;
+  }
+  if (req.url === "/slow-body") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.write("slow-");
+    setTimeout(() => res.end("body"), 1_000);
+    return;
+  }
   if (req.url === "/to-redirect") {
     res.writeHead(302, { Location: "http://localhost:3002/from-redirect" });
     res.end("Redirecting");
@@ -853,6 +866,49 @@ await expectRun(
     success: true,
   },
 );
+
+// Check slow responses succeed with the default timeouts
+await startServer({ SANDBOX_HTTP_MODE: "ALLOW_ALL", SANDBOX_MODULE_METHOD: "run" });
+for (const path of ["slow-headers", "slow-body"]) {
+  const { success, result } = await run({
+    code: `
+      export async function run() {
+        return await (await fetch('http://localhost:3001/${path}')).text()
+      }
+    `,
+    parameters: [],
+  });
+  eq({ success, result }, { success: true, result: path });
+}
+
+// Check timeouts configured via env vars are applied
+await startServer({
+  SANDBOX_HTTP_MODE: "ALLOW_ALL",
+  SANDBOX_MODULE_METHOD: "run",
+  SANDBOX_REQUEST_FIRST_BYTE_TIMEOUT: "0.2s",
+  SANDBOX_REQUEST_BETWEEN_BYTES_TIMEOUT: "200ms",
+});
+for (const [path, error] of [
+  ["slow-headers", "TypeError: NetworkError when attempting to fetch resource"],
+  ["slow-body", "TypeError: IO error reading from incoming response body"],
+]) {
+  const start = Date.now();
+  const { result } = await run({
+    code: `
+      export async function run() {
+        try {
+          return await (await fetch('http://localhost:3001/${path}')).text()
+        } catch (e) {
+          return String(e)
+        }
+      }
+    `,
+    parameters: [],
+  });
+  const duration = Date.now() - start;
+  eq(result, error);
+  assert(duration < 800, `${path} took too long to time out: ${duration}ms`);
+}
 
 if (proc) proc.kill();
 server.close();

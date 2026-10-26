@@ -72,6 +72,13 @@ SANDBOX_HTTP_MODE="BLOCK_ALL"
 # The maximum number of outbound HTTP requests per call to /evaluate
 # You can set this to "UNBOUNDED" to remove this limit.
 SANDBOX_REQUEST_LIMIT="1K"
+# The maximum time to wait for an outbound HTTP request to connect, for
+# the first byte of the response, and between chunks of the response body.
+# These accept a number of milliseconds or a value with a unit, like
+# "500ms", "10s", "10 seconds", "5m", "5 minutes" or "1h".
+SANDBOX_REQUEST_CONNECT_TIMEOUT="10m"
+SANDBOX_REQUEST_FIRST_BYTE_TIMEOUT="10m"
+SANDBOX_REQUEST_BETWEEN_BYTES_TIMEOUT="10m"
 # Enable this to automatically strip types before evaluating
 # the code passed to the "/evaluate" endpoint. This does incur
 # a small performance overhead.

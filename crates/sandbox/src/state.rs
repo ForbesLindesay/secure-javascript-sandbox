@@ -10,7 +10,8 @@ use crate::http::{OutboundRequest, send_request_handler};
 use crate::memory::MemoryLimits;
 use crate::shared_vec::SharedVec;
 use crate::{
-    CustomHttpMode, CustomImportMap, RequestLimit, RequestValidationOutcome, ResolvedModule,
+    CustomHttpMode, CustomImportMap, RequestLimit, RequestTimeouts, RequestValidationOutcome,
+    ResolvedModule,
 };
 
 pub(crate) struct SandboxState<TImportMap: CustomImportMap, THttpMode: CustomHttpMode> {
@@ -50,6 +51,7 @@ pub(crate) struct SandboxHttpState<THttpMode: CustomHttpMode> {
     pub request_count: usize,
     pub requests: SharedVec<OutboundRequest>,
     pub request_limit: RequestLimit,
+    pub request_timeouts: RequestTimeouts,
     pub http: THttpMode,
 }
 impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
@@ -75,11 +77,12 @@ impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
             ));
             return Box::new(async { Err(HttpError::ConnectionLimitReached) });
         }
+        let timeouts = self.request_timeouts.limit(options);
         let http_mode = self.http.clone();
         let requests = self.requests.clone();
         Box::new(async move {
             let (response, io) =
-                send_request_handler(request, options, &http_mode, requests).await?;
+                send_request_handler(request, timeouts, &http_mode, requests).await?;
             Ok((
                 response,
                 Box::new(io) as Box<dyn Future<Output = Result<(), HttpError>> + Send>,

@@ -17,10 +17,10 @@ pub use hyper::{Request, Uri};
 pub use imports::{CustomImportMap, ImportMap, ResolvedModule, StaticImportSource};
 pub use limit_values::{
     ApiRequestBodyLimit, CpuFuel, MemoryLimitBytes, MemorySizeBytes, RequestLimit, ResourceLimit,
-    TableLimit,
+    TableLimit, Timeout,
 };
 pub use memory::MemoryLimits;
-pub use sandbox::{EvaluateError, EvaluateMode, SandboxConfig, SandboxEngine};
+pub use sandbox::{EvaluateError, EvaluateMode, RequestTimeouts, SandboxConfig, SandboxEngine};
 pub use tsutils::{
     ModuleExport, StaticImport, TsUtilsEngine, TsUtilsEvaluateError, TsUtilsSandboxConfig,
     TsUtilsSandboxInstance, ValidateModuleMode,

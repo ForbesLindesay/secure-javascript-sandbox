@@ -19,8 +19,9 @@ use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
 use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
 use wasmtime_wasi_http::io::TokioIo;
-use wasmtime_wasi_http::{Error, RequestOptions, WasiBody};
+use wasmtime_wasi_http::{Error, WasiBody};
 
+use crate::RequestTimeouts;
 use crate::ip_utils::IpUtils;
 use crate::shared_vec::SharedVec;
 
@@ -173,7 +174,11 @@ impl CustomHttpMode for HttpMode {
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn send_request_handler(
     request: hyper::Request<WasiBody>,
-    options: Option<RequestOptions>,
+    RequestTimeouts {
+        connect_timeout,
+        first_byte_timeout,
+        between_bytes_timeout,
+    }: RequestTimeouts,
     http_mode: &impl CustomHttpMode,
     requests: SharedVec<OutboundRequest>,
 ) -> Result<
@@ -183,15 +188,6 @@ pub(crate) async fn send_request_handler(
     ),
     Error,
 > {
-    let connect_timeout = options
-        .and_then(|o| o.connect_timeout)
-        .unwrap_or(DEFAULT_TIMEOUT);
-    let first_byte_timeout = options
-        .and_then(|o| o.first_byte_timeout)
-        .unwrap_or(DEFAULT_TIMEOUT);
-    let between_bytes_timeout = options
-        .and_then(|o| o.between_bytes_timeout)
-        .unwrap_or(DEFAULT_TIMEOUT);
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
     while let Some(request) = next_request {
@@ -406,8 +402,6 @@ fn dns_error(rcode: String, info_code: u16) -> Error {
         info_code: Some(info_code),
     }
 }
-
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Drive the `hyper` connection in the background. The returned handle is
 /// handed back to wasmtime, which keeps it alive for as long as the response.

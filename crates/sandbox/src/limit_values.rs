@@ -1,5 +1,5 @@
 use serde::{Deserialize, de::Visitor};
-use std::{marker::PhantomData, str::FromStr};
+use std::{marker::PhantomData, str::FromStr, time::Duration};
 
 #[derive(Clone, Copy)]
 enum ScalePrefix {
@@ -35,47 +35,16 @@ impl ScalePrefix {
 }
 
 trait SuffixParser {
-    fn parse(a: char, b: Option<char>) -> Option<u64>;
-}
-
-struct SuffixChars(Option<char>, Option<char>);
-impl SuffixChars {
-    fn new(a: char) -> Self {
-        SuffixChars(
-            match a {
-                ' ' => None,
-                c => Some(c),
-            },
-            None,
-        )
-    }
-}
-impl SuffixChars {
-    fn push(&mut self, c: char) -> Result<(), ()> {
-        if self.0.is_none() {
-            self.0 = Some(c);
-            Ok(())
-        } else if self.1.is_none() {
-            self.1 = Some(c);
-            Ok(())
-        } else {
-            Err(())
-        }
-    }
-    fn parse<T: SuffixParser>(self) -> Option<u64> {
-        match self.0 {
-            Some(a) => T::parse(a, self.1),
-            None => None,
-        }
-    }
+    fn parse(suffix: &str) -> Option<u64>;
 }
 
 struct MemorySuffix;
 impl SuffixParser for MemorySuffix {
-    fn parse(a: char, b: Option<char>) -> Option<u64> {
-        match (a, b) {
-            ('B' | 'b', None) => Some(1),
-            (scale_prefix, Some('B' | 'b')) => {
+    fn parse(suffix: &str) -> Option<u64> {
+        let mut chars = suffix.chars();
+        match (chars.next()?, chars.as_str()) {
+            ('B' | 'b', "") => Some(1),
+            (scale_prefix, "B" | "b") => {
                 Some(ScalePrefix::parse_char(scale_prefix)?.into_byte_multiplier())
             }
             _ => None,
@@ -85,11 +54,27 @@ impl SuffixParser for MemorySuffix {
 
 struct NoUnitSuffix;
 impl SuffixParser for NoUnitSuffix {
-    fn parse(a: char, b: Option<char>) -> Option<u64> {
-        if b.is_some() {
+    fn parse(suffix: &str) -> Option<u64> {
+        let mut chars = suffix.chars();
+        let scale_prefix = ScalePrefix::parse_char(chars.next()?)?;
+        if !chars.as_str().is_empty() {
             return None;
         }
-        Some(ScalePrefix::parse_char(a)?.into_si_multiplier())
+        Some(scale_prefix.into_si_multiplier())
+    }
+}
+
+/// Parses durations into a number of milliseconds
+struct DurationSuffix;
+impl SuffixParser for DurationSuffix {
+    fn parse(suffix: &str) -> Option<u64> {
+        match suffix.to_ascii_lowercase().as_str() {
+            "ms" | "millisecond" | "milliseconds" => Some(1),
+            "s" | "sec" | "secs" | "second" | "seconds" => Some(1000),
+            "m" | "min" | "mins" | "minute" | "minutes" => Some(60 * 1000),
+            "h" | "hr" | "hrs" | "hour" | "hours" => Some(60 * 60 * 1000),
+            _ => None,
+        }
     }
 }
 trait PositiveNumber:
@@ -108,22 +93,20 @@ impl PositiveNumber for u32 {}
 impl PositiveNumber for u64 {}
 impl PositiveNumber for usize {}
 
-fn parse_number_parts(value: &str) -> Option<(u64, u64, Option<SuffixChars>)> {
+fn parse_number_parts(input: &str) -> Option<(u64, u64, Option<&str>)> {
     // Value must always start with a digit
-    let mut chars = value.chars();
-    let first_digit = chars.next()?.to_digit(10)?;
+    let mut chars = input.char_indices();
+    let first_digit = chars.next()?.1.to_digit(10)?;
     let mut value: u64 = first_digit.into();
     let mut got_separator = false;
 
     let mut got_decimal = false;
     let mut decimal_places: u32 = 0;
 
-    let mut suffix: Option<SuffixChars> = None;
+    let mut suffix: Option<&str> = None;
 
-    for char in chars {
-        if let Some(s) = &mut suffix {
-            s.push(char).ok()?;
-        } else if let Some(digit) = char.to_digit(10) {
+    for (index, char) in chars {
+        if let Some(digit) = char.to_digit(10) {
             if got_decimal {
                 decimal_places = decimal_places.checked_add(1)?;
             } else if first_digit == 0 {
@@ -146,7 +129,10 @@ fn parse_number_parts(value: &str) -> Option<(u64, u64, Option<SuffixChars>)> {
             }
             got_separator = true;
         } else {
-            suffix = Some(SuffixChars::new(char));
+            // The suffix is everything after the number, optionally separated by a single space
+            let rest = &input[index..];
+            suffix = Some(rest.strip_prefix(' ').unwrap_or(rest));
+            break;
         }
     }
     if got_separator {
@@ -160,11 +146,10 @@ fn parse_number_parts(value: &str) -> Option<(u64, u64, Option<SuffixChars>)> {
 }
 
 fn parse_u64<TSuffix: SuffixParser>(value: &str) -> Option<u64> {
-    let (result, decimal_divisor, suffix_chars) = parse_number_parts(value)?;
-    let suffix_multiplier = if let Some(s) = suffix_chars {
-        s.parse::<TSuffix>()?
-    } else {
-        1
+    let (result, decimal_divisor, suffix) = parse_number_parts(value)?;
+    let suffix_multiplier = match suffix {
+        Some(suffix) => TSuffix::parse(suffix)?,
+        None => 1,
     };
     if decimal_divisor > suffix_multiplier {
         return None;
@@ -329,6 +314,40 @@ fn test_parse_number() {
     );
 }
 
+#[test]
+fn test_parse_duration() {
+    test_parse_number_without_suffix::<DurationSuffix>();
+
+    assert_parse_ok::<DurationSuffix>("500ms", 500);
+    assert_parse_ok::<DurationSuffix>("500 milliseconds", 500);
+    assert_parse_ok::<DurationSuffix>("10s", 10_000);
+    assert_parse_ok::<DurationSuffix>("10 seconds", 10_000);
+    assert_parse_ok::<DurationSuffix>("1 second", 1000);
+    assert_parse_ok::<DurationSuffix>("0.5s", 500);
+    assert_parse_ok::<DurationSuffix>("5m", 300_000);
+    assert_parse_ok::<DurationSuffix>("5 minutes", 300_000);
+    assert_parse_ok::<DurationSuffix>("5 Minutes", 300_000);
+    assert_parse_ok::<DurationSuffix>("1.5 mins", 90_000);
+    assert_parse_ok::<DurationSuffix>("2h", 7_200_000);
+    assert_parse_ok::<DurationSuffix>("1 hour", 3_600_000);
+    assert!(
+        parse_u64::<DurationSuffix>("10 fortnights").is_none(),
+        "expected error parsing unknown unit"
+    );
+    assert!(
+        parse_u64::<DurationSuffix>("10  seconds").is_none(),
+        "expected error parsing string with two spaces before suffix"
+    );
+    assert!(
+        parse_u64::<DurationSuffix>("10 seconds ").is_none(),
+        "expected error parsing string with space after suffix"
+    );
+    assert!(
+        parse_u64::<DurationSuffix>("1.5ms").is_none(),
+        "expected error parsing with more decimal places than the unit allows"
+    );
+}
+
 macro_rules! number_type {
     ($id:ident, $underlying:ty, $suffix:ident, name=$name:expr, expect=$expected:expr, default=$default_value:expr, min=$min_value:expr) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -476,6 +495,20 @@ number_type!(
     default = 440_000_000,
     min = 1
 );
+number_type!(
+    Timeout,
+    u64,
+    DurationSuffix,
+    name = "Timeout",
+    expect = "a positive integer number of milliseconds or a string like '10s' or '5 minutes'",
+    default = 10 * 60 * 1000,
+    min = 1
+);
+impl From<Timeout> for Duration {
+    fn from(value: Timeout) -> Self {
+        Duration::from_millis(value.0)
+    }
+}
 
 optional_bound!(
     ApiRequestBodyLimit,
@@ -514,6 +547,23 @@ optional_bound!(
     default = 1_000,
     min = 0
 );
+
+#[test]
+fn test_timeout_deserialize() {
+    let timeout: Timeout =
+        serde_json::from_str("\"10 seconds\"").expect("failed to deserialize timeout");
+    assert_eq!(Duration::from(timeout), Duration::from_secs(10));
+    let timeout: Timeout = serde_json::from_str("\"5m\"").expect("failed to deserialize timeout");
+    assert_eq!(Duration::from(timeout), Duration::from_mins(5));
+    let timeout: Timeout = serde_json::from_str("1500").expect("failed to deserialize timeout");
+    assert_eq!(Duration::from(timeout), Duration::from_millis(1500));
+    let timeout: Timeout = "10s".parse().expect("failed to parse timeout");
+    assert_eq!(Duration::from(timeout), Duration::from_secs(10));
+    assert!(
+        serde_json::from_str::<Timeout>("0").is_err(),
+        "expected error deserializing a zero timeout"
+    );
+}
 
 #[test]
 fn test_memory_size_bytes_deserialize() {

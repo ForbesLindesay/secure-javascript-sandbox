@@ -8,8 +8,8 @@ use serde::{Deserialize, de::DeserializeOwned};
 
 use secure_js_sandbox::{
     ApiRequestBodyLimit, CpuFuel, CustomHttpMode, CustomImportMap, EvaluateMode, HttpMode,
-    ImportMap, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, ResourceLimit,
-    SandboxConfig, StaticImportSource, TableLimit,
+    ImportMap, MemoryLimitBytes, MemoryLimits, MemorySizeBytes, RequestLimit, RequestTimeouts,
+    ResourceLimit, SandboxConfig, StaticImportSource, TableLimit, Timeout,
 };
 
 use crate::env::get_env;
@@ -112,6 +112,43 @@ impl SandboxServerMemoryLimits {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub struct SandboxServerRequestTimeouts {
+    #[serde(default)]
+    pub connect_timeout: Timeout,
+    #[serde(default)]
+    pub first_byte_timeout: Timeout,
+    #[serde(default)]
+    pub between_bytes_timeout: Timeout,
+}
+impl SandboxServerRequestTimeouts {
+    #[must_use]
+    pub fn to_request_timeouts(&self) -> RequestTimeouts {
+        RequestTimeouts {
+            connect_timeout: self.connect_timeout.into(),
+            first_byte_timeout: self.first_byte_timeout.into(),
+            between_bytes_timeout: self.between_bytes_timeout.into(),
+        }
+    }
+    pub(crate) fn from_env(prefix: &str) -> anyhow::Result<Self> {
+        let mut result = Self::default();
+        set_from_env!(result, connect_timeout, prefix, "REQUEST_CONNECT_TIMEOUT");
+        set_from_env!(
+            result,
+            first_byte_timeout,
+            prefix,
+            "REQUEST_FIRST_BYTE_TIMEOUT"
+        );
+        set_from_env!(
+            result,
+            between_bytes_timeout,
+            prefix,
+            "REQUEST_BETWEEN_BYTES_TIMEOUT"
+        );
+        Ok(result)
+    }
+}
+
 pub struct SandboxServerConfig<
     THttpMode: CustomHttpMode = HttpMode,
     TImportMap: CustomImportMap + Clone = ImportMap,
@@ -121,6 +158,7 @@ pub struct SandboxServerConfig<
     pub memory_limits: SandboxServerMemoryLimits,
     pub http: THttpMode,
     pub request_limit: RequestLimit,
+    pub request_timeouts: SandboxServerRequestTimeouts,
     pub import_map: TImportMap,
     pub sandbox_auto_strip_types: bool,
     pub module_method: Option<Box<str>>,
@@ -134,6 +172,7 @@ impl Default for SandboxServerConfig {
             memory_limits: SandboxServerMemoryLimits::default(),
             http: HttpMode::default(),
             request_limit: RequestLimit::default(),
+            request_timeouts: SandboxServerRequestTimeouts::default(),
             import_map: ImportMap::default(),
             sandbox_auto_strip_types: false,
             module_method: None,
@@ -149,6 +188,7 @@ impl SandboxServerConfig {
             memory_limits: SandboxServerMemoryLimits::from_env("SANDBOX")?,
             http: get_env("SANDBOX_HTTP_MODE")?.unwrap_or_default(),
             request_limit: get_env("SANDBOX_REQUEST_LIMIT")?.unwrap_or_default(),
+            request_timeouts: SandboxServerRequestTimeouts::from_env("SANDBOX")?,
             import_map: import_map_from_env()?,
             sandbox_auto_strip_types: get_env("SANDBOX_AUTO_STRIP_TYPES")?.unwrap_or(false),
             module_method: get_env::<String>("SANDBOX_MODULE_METHOD")?.map(String::into_boxed_str),
@@ -173,6 +213,7 @@ impl<THttpMode: CustomHttpMode, TImportMap: CustomImportMap + Clone>
                 http: self.http.clone(),
                 imports: self.import_map.clone(),
                 request_limit: self.request_limit,
+                request_timeouts: self.request_timeouts.to_request_timeouts(),
                 mode: match &self.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method.clone()),
                     None => EvaluateMode::FunctionCall,
@@ -218,6 +259,7 @@ impl<TImportMap: CustomImportMap + Clone>
                 http: request.config.http,
                 imports: self.import_map.clone(),
                 request_limit: request.config.request_limit,
+                request_timeouts: request.config.request_timeouts.to_request_timeouts(),
                 mode: match request.config.module_method {
                     Some(method) => EvaluateMode::ModuleMethod(method),
                     None => EvaluateMode::FunctionCall,
