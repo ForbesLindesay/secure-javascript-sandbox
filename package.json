@@ -1,17 +1,17 @@
 {
   "private": true,
   "dependencies": {
-    "@bytecodealliance/componentize-js": "^0.21.0",
-    "@bytecodealliance/jco": "^1.24.3",
-    "@types/node": "^26.0.0",
-    "prettier": "3.8.4"
+    "@bytecodealliance/componentize-js": "^0.23.0",
+    "@bytecodealliance/jco": "^1.39.0",
+    "@types/node": "^26.6.5",
+    "prettier": "3.9.10"
   },
   "scripts": {
     "build": "node --run build:sandbox && cargo build",
     "build:release": "node --run build:sandbox && cargo build --release",
     "build:sandbox": "node --experimental-strip-types sandbox/build.mts --release",
     "release": "node --run test && node release.mjs",
-    "test": "cargo fmt && cargo clippy && cargo test && node --run test:integration",
+    "test": "cargo fmt && cargo clippy --all-targets && cargo test && node --run test:integration",
     "test:integration": "node --experimental-strip-types tests/test.ts"
   },
   "prettier": {

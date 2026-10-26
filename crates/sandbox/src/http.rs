@@ -1,21 +1,25 @@
 use std::collections::HashSet;
 use std::fmt::{self, Debug, Display};
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::{Context, Poll, ready};
+use std::time::Duration;
 
 use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::HeaderMap;
+use hyper::body::{Body, Frame, SizeHint};
 use hyper::header::{self, HeaderValue};
+use hyper::http::uri::Scheme;
 use hyper::{Method, Uri};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;
+use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
 use wasmtime_wasi_http::io::TokioIo;
-use wasmtime_wasi_http::p2::bindings::http::types::{DnsErrorPayload, ErrorCode};
-use wasmtime_wasi_http::p2::hyper_request_error;
-use wasmtime_wasi_http::p2::types::{IncomingResponse, OutgoingRequestConfig};
+use wasmtime_wasi_http::{Error, RequestOptions, WasiBody};
 
 use crate::ip_utils::IpUtils;
 use crate::shared_vec::SharedVec;
@@ -163,26 +167,37 @@ impl CustomHttpMode for HttpMode {
     }
 }
 
-// Based on use wasmtime_wasi_http::types::default_send_request_handler;
+// Based on use wasmtime_wasi_http::default_send_request;
 // but extracted to allow hooking in our own logic for allowing/blocking requests
 // and to handle redirects.
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn send_request_handler(
-    request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
-    OutgoingRequestConfig {
-        use_tls,
-        connect_timeout,
-        first_byte_timeout,
-        between_bytes_timeout,
-    }: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
+    request: hyper::Request<WasiBody>,
+    options: Option<RequestOptions>,
     http_mode: &impl CustomHttpMode,
     requests: SharedVec<OutboundRequest>,
-) -> Result<wasmtime_wasi_http::p2::types::IncomingResponse, ErrorCode> {
+) -> Result<
+    (
+        hyper::Response<WasiBody>,
+        AbortOnDropJoinHandle<Result<(), Error>>,
+    ),
+    Error,
+> {
+    let connect_timeout = options
+        .and_then(|o| o.connect_timeout)
+        .unwrap_or(DEFAULT_TIMEOUT);
+    let first_byte_timeout = options
+        .and_then(|o| o.first_byte_timeout)
+        .unwrap_or(DEFAULT_TIMEOUT);
+    let between_bytes_timeout = options
+        .and_then(|o| o.between_bytes_timeout)
+        .unwrap_or(DEFAULT_TIMEOUT);
     let mut redirect_count: u8 = 0;
     let mut next_request = Some(request);
     while let Some(request) = next_request {
         let (parts, body) = request.into_parts();
         let mut request = hyper::Request::from_parts(parts.clone(), body);
+        let use_tls = request.uri().scheme() == Some(&Scheme::HTTPS);
         if !http_mode.can_send_request(RequestHeaders {
             method: request.method(),
             uri: request.uri(),
@@ -193,7 +208,7 @@ pub(crate) async fn send_request_handler(
                 None,
                 RequestValidationOutcome::Blocked,
             ));
-            return Err(ErrorCode::DestinationNotFound);
+            return Err(Error::DestinationNotFound);
         }
 
         let authority: String = if let Some(authority) = request.uri().authority() {
@@ -204,13 +219,13 @@ pub(crate) async fn send_request_handler(
                 format!("{authority}:{port}")
             }
         } else {
-            return Err(ErrorCode::HttpRequestUriInvalid);
+            return Err(Error::HttpRequestUriInvalid);
         };
 
         if let Ok(value) = header::HeaderValue::from_str(&authority) {
             request.headers_mut().insert(header::HOST, value);
         } else {
-            return Err(ErrorCode::HttpRequestUriInvalid);
+            return Err(Error::HttpRequestUriInvalid);
         }
 
         let (tcp_stream, socket_addr) = timeout(
@@ -218,7 +233,7 @@ pub(crate) async fn send_request_handler(
             get_tcp_stream(request.uri(), &authority, http_mode, &requests),
         )
         .await
-        .map_err(|_| ErrorCode::ConnectionTimeout)??;
+        .map_err(|_| Error::ConnectionTimeout)??;
         {
             requests.push(OutboundRequest(
                 request.uri().clone(),
@@ -247,7 +262,7 @@ pub(crate) async fn send_request_handler(
                 .to_owned();
             let stream = connector.connect(domain, tcp_stream).await.map_err(|e| {
                 tracing::warn!("tls protocol error: {e:?}");
-                ErrorCode::TlsProtocolError
+                Error::TlsProtocolError
             })?;
             let stream = TokioIo::new(stream);
 
@@ -256,19 +271,9 @@ pub(crate) async fn send_request_handler(
                 hyper::client::conn::http1::handshake(stream),
             )
             .await
-            .map_err(|_| ErrorCode::ConnectionTimeout)?
-            .map_err(hyper_request_error)?;
+            .map_err(|_| Error::ConnectionTimeout)??;
 
-            let worker = wasmtime_wasi::runtime::spawn(async move {
-                match conn.await {
-                    Ok(()) => {}
-                    // TODO: shouldn't throw away this error and ideally should
-                    // surface somewhere.
-                    Err(e) => tracing::warn!("dropping error {e}"),
-                }
-            });
-
-            (sender, worker)
+            (sender, spawn_connection(conn))
         } else {
             let tcp_stream = TokioIo::new(tcp_stream);
             let (sender, conn) = timeout(
@@ -277,18 +282,9 @@ pub(crate) async fn send_request_handler(
                 hyper::client::conn::http1::handshake(tcp_stream),
             )
             .await
-            .map_err(|_| ErrorCode::ConnectionTimeout)?
-            .map_err(hyper_request_error)?;
+            .map_err(|_| Error::ConnectionTimeout)??;
 
-            let worker = wasmtime_wasi::runtime::spawn(async move {
-                match conn.await {
-                    Ok(()) => {}
-                    // TODO: same as above, shouldn't throw this error away.
-                    Err(e) => tracing::warn!("dropping error {e}"),
-                }
-            });
-
-            (sender, worker)
+            (sender, spawn_connection(conn))
         };
 
         // at this point, the request contains the scheme and the authority, but
@@ -303,13 +299,14 @@ pub(crate) async fn send_request_handler(
 
         let resp = timeout(first_byte_timeout, sender.send_request(request))
             .await
-            .map_err(|_| ErrorCode::ConnectionReadTimeout)?
-            .map_err(hyper_request_error)?
-            .map(|body| body.map_err(hyper_request_error).boxed_unsync());
+            .map_err(|_| Error::ConnectionReadTimeout)??
+            .map(|incoming| {
+                IncomingResponseBody::new(incoming, between_bytes_timeout).boxed_unsync()
+            });
 
         if is_redirect_status(resp.status()) {
             if redirect_count >= 20 {
-                return Err(ErrorCode::LoopDetected);
+                return Err(Error::LoopDetected);
             }
             let mut request = hyper::Request::from_parts(parts, UnsyncBoxBody::default());
             if request.method() != Method::GET && request.method() != Method::HEAD {
@@ -324,16 +321,12 @@ pub(crate) async fn send_request_handler(
                 .get(header::LOCATION)
                 .and_then(|location| location.to_str().ok())
                 .and_then(|location_str| Uri::try_from(location_str).ok())
-                .ok_or(ErrorCode::HttpRequestUriInvalid)?;
+                .ok_or(Error::HttpRequestUriInvalid)?;
             next_request = Some(request);
             redirect_count += 1;
             continue;
         }
-        return Ok(IncomingResponse {
-            resp,
-            worker: Some(worker),
-            between_bytes_timeout,
-        });
+        return Ok((resp, worker));
     }
     unreachable!()
 }
@@ -343,7 +336,7 @@ async fn get_tcp_stream(
     authority: &str,
     http_mode: &impl CustomHttpMode,
     requests: &SharedVec<OutboundRequest>,
-) -> Result<(TcpStream, SocketAddr), ErrorCode> {
+) -> Result<(TcpStream, SocketAddr), Error> {
     let hosts = lookup_host(&authority)
         .await
         .map_err(|_| dns_error("address not available".to_string(), 0))?;
@@ -356,7 +349,7 @@ async fn get_tcp_stream(
                 Some(addr),
                 RequestValidationOutcome::Blocked,
             ));
-            return Err(ErrorCode::DestinationIpProhibited);
+            return Err(Error::DestinationIpProhibited);
         }
         let tcp_stream = TcpStream::connect(addr).await;
         match tcp_stream {
@@ -389,7 +382,7 @@ async fn get_tcp_stream(
                 {
                     dns_error("address not available".to_string(), 0)
                 } else {
-                    ErrorCode::ConnectionRefused
+                    Error::ConnectionRefused
                 }
             }
         },
@@ -407,9 +400,67 @@ fn is_redirect_status(status: hyper::StatusCode) -> bool {
     )
 }
 
-fn dns_error(rcode: String, info_code: u16) -> ErrorCode {
-    ErrorCode::DnsError(DnsErrorPayload {
+fn dns_error(rcode: String, info_code: u16) -> Error {
+    Error::DnsError {
         rcode: Some(rcode),
         info_code: Some(info_code),
-    })
+    }
+}
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Drive the `hyper` connection in the background. The returned handle is
+/// handed back to wasmtime, which keeps it alive for as long as the response.
+fn spawn_connection(
+    conn: impl Future<Output = Result<(), hyper::Error>> + Send + 'static,
+) -> AbortOnDropJoinHandle<Result<(), Error>> {
+    wasmtime_wasi::runtime::spawn(async move { conn.await.map_err(hyper_error) })
+}
+
+fn hyper_error(err: hyper::Error) -> Error {
+    if err.is_timeout() {
+        Error::HttpResponseTimeout
+    } else {
+        err.into()
+    }
+}
+
+/// Response body that fails if no data is received for `between_bytes_timeout`.
+///
+/// Based on the private body type in `wasmtime_wasi_http::default_send_request`.
+struct IncomingResponseBody {
+    incoming: hyper::body::Incoming,
+    timeout: tokio::time::Interval,
+}
+impl IncomingResponseBody {
+    fn new(incoming: hyper::body::Incoming, between_bytes_timeout: Duration) -> Self {
+        // Tokio panics on an `interval` with a zero duration, so clamp it to a
+        // 1ns timeout which is sort of effectively zero anyway.
+        let mut timeout = tokio::time::interval(between_bytes_timeout.max(Duration::from_nanos(1)));
+        timeout.reset();
+        Self { incoming, timeout }
+    }
+}
+impl Body for IncomingResponseBody {
+    type Data = <hyper::body::Incoming as Body>::Data;
+    type Error = Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let frame = Pin::new(&mut self.incoming).poll_frame(cx);
+        if frame.is_pending() {
+            ready!(self.timeout.poll_tick(cx));
+            return Poll::Ready(Some(Err(Error::ConnectionReadTimeout)));
+        }
+        self.timeout.reset();
+        frame.map_err(hyper_error)
+    }
+    fn is_end_stream(&self) -> bool {
+        self.incoming.is_end_stream()
+    }
+    fn size_hint(&self) -> SizeHint {
+        self.incoming.size_hint()
+    }
 }

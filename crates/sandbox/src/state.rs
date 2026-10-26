@@ -1,11 +1,9 @@
 use wasmtime::ResourceLimiter;
 use wasmtime::component::HasData;
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxView, WasiView};
-use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::p2::types::HostFutureIncomingResponse;
 use wasmtime_wasi_http::{
-    WasiHttpCtx,
-    p2::{WasiHttpCtxView, WasiHttpHooks, WasiHttpView},
+    Error as HttpError, RequestOptions, WasiBody, WasiHttpCtx, WasiHttpCtxView, WasiHttpHooks,
+    WasiHttpView,
 };
 
 use crate::http::{OutboundRequest, send_request_handler};
@@ -57,10 +55,17 @@ pub(crate) struct SandboxHttpState<THttpMode: CustomHttpMode> {
 impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
     fn send_request(
         &mut self,
-        request: hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
-        config: wasmtime_wasi_http::p2::types::OutgoingRequestConfig,
-    ) -> wasmtime_wasi_http::p2::HttpResult<wasmtime_wasi_http::p2::types::HostFutureIncomingResponse>
-    {
+        request: hyper::Request<WasiBody>,
+        options: Option<RequestOptions>,
+        _fut: Box<dyn Future<Output = Result<(), HttpError>> + Send>,
+    ) -> Box<
+        dyn Future<
+                Output = wasmtime_wasi_http::Result<(
+                    hyper::Response<WasiBody>,
+                    Box<dyn Future<Output = Result<(), HttpError>> + Send>,
+                )>,
+            > + Send,
+    > {
         self.request_count = self.request_count.saturating_add(1);
         if !self.request_limit.is_within_bound(self.request_count) {
             self.requests.push(OutboundRequest(
@@ -68,17 +73,18 @@ impl<THttpMode: CustomHttpMode> WasiHttpHooks for SandboxHttpState<THttpMode> {
                 None,
                 RequestValidationOutcome::Blocked,
             ));
-            return Ok(HostFutureIncomingResponse::ready(Ok(Err(
-                ErrorCode::ConnectionLimitReached,
-            ))));
+            return Box::new(async { Err(HttpError::ConnectionLimitReached) });
         }
         let http_mode = self.http.clone();
         let requests = self.requests.clone();
-        let handle = wasmtime_wasi::runtime::spawn(async move {
-            let result = send_request_handler(request, config, &http_mode, requests).await;
-            Ok(result)
-        });
-        Ok(HostFutureIncomingResponse::pending(handle))
+        Box::new(async move {
+            let (response, io) =
+                send_request_handler(request, options, &http_mode, requests).await?;
+            Ok((
+                response,
+                Box::new(io) as Box<dyn Future<Output = Result<(), HttpError>> + Send>,
+            ))
+        })
     }
 }
 

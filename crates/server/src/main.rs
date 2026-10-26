@@ -10,7 +10,7 @@ use secure_js_sandbox_axum_handler::{
 mod signal;
 
 #[tokio::main]
-pub async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install default TLS provider");

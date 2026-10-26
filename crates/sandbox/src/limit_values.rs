@@ -251,9 +251,9 @@ impl<TNumber: PositiveNumber, TResult: TryFrom<TNumber> + FromStr> Visitor<'_>
 #[cfg(test)]
 fn assert_parse_ok<TSuffix: SuffixParser>(string_to_parse: &str, parsed_number: u64) {
     assert_eq!(
-        parse_u64::<TSuffix>(string_to_parse)
-            .expect(&format!("{} was not passed successfully", string_to_parse)),
-        parsed_number
+        parse_u64::<TSuffix>(string_to_parse),
+        Some(parsed_number),
+        "{string_to_parse} was not parsed successfully"
     );
 }
 
@@ -301,7 +301,7 @@ fn test_parse_number() {
     assert_parse_ok::<MemorySuffix>("2MB", 2_097_152);
     assert_parse_ok::<MemorySuffix>("1 KB", 1024);
     assert_parse_ok::<NoUnitSuffix>("1 K", 1000);
-    assert_parse_ok::<MemorySuffix>("1,000 KB", 1024_000);
+    assert_parse_ok::<MemorySuffix>("1,000 KB", 1_024_000);
     assert_parse_ok::<NoUnitSuffix>("1,000 K", 1_000_000);
     assert_parse_ok::<MemorySuffix>("2.5 GB", 2_684_354_560);
     assert_parse_ok::<NoUnitSuffix>("2.5 G", 2_500_000_000);
@@ -519,10 +519,10 @@ optional_bound!(
 fn test_memory_size_bytes_deserialize() {
     let limited: MemoryLimitBytes =
         serde_json::from_str("\"1,000KB\"").expect("failed to deserialize limited memory size");
-    assert_eq!(limited, MemoryLimitBytes::Limited(1024000));
+    assert_eq!(limited, MemoryLimitBytes::Limited(1_024_000));
     let limited: MemoryLimitBytes =
         serde_json::from_str("1048576").expect("failed to deserialize limited memory size");
-    assert_eq!(limited, MemoryLimitBytes::Limited(1048576));
+    assert_eq!(limited, MemoryLimitBytes::Limited(1_048_576));
     let unbounded: MemoryLimitBytes =
         serde_json::from_str("\"UNBOUNDED\"").expect("failed to deserialize unbounded memory size");
     assert_eq!(unbounded, MemoryLimitBytes::Unbounded);

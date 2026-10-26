@@ -270,7 +270,7 @@ mod tests {
                         }}
                     "#
                 ),
-                &vec![],
+                &[],
                 Default::default(),
             )
             .await

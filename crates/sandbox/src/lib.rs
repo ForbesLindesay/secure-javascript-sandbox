@@ -28,7 +28,7 @@ pub use tsutils::{
 pub use wasmtime::{StoreLimits, StoreLimitsBuilder};
 pub use wasmtime_wasi::WasiCtx;
 pub use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
-pub use wasmtime_wasi_http::p2::types::OutgoingRequestConfig;
+pub use wasmtime_wasi_http::RequestOptions;
 
 #[cfg(test)]
 mod tests {
@@ -42,8 +42,8 @@ mod tests {
         let result = engine
             .evaluate(
                 "function (a, b) { return a + b; }",
-                &vec![json!(40), json!(2)],
-                Default::default(),
+                &[json!(40), json!(2)],
+                SandboxConfig::default(),
             )
             .await
             .result
@@ -56,8 +56,8 @@ mod tests {
         let engine = SandboxEngine::new().unwrap();
         let result = engine.evaluate(
             "async function (a, b) { await new Promise(r => setTimeout(r, 100)); return a + b; }",
-            &vec![json!(40), json!(2)],
-            Default::default(),
+            &[json!(40), json!(2)],
+            SandboxConfig::default(),
         ).await.result.unwrap();
         assert_eq!(result, json!(42));
     }
@@ -68,7 +68,7 @@ mod tests {
         let result = engine
             .evaluate(
                 "function (a: number, b: number): number { return a + b; }",
-                &vec![json!(40), json!(2)],
+                &[json!(40), json!(2)],
                 SandboxConfig {
                     strip_typescript_types: true,
                     ..Default::default()
@@ -86,7 +86,7 @@ mod tests {
         let result = engine
             .evaluate(
                 "export function run(a, b) { return a + b; }",
-                &vec![json!(40), json!(2)],
+                &[json!(40), json!(2)],
                 SandboxConfig {
                     mode: EvaluateMode::ModuleMethod("run".into()),
                     ..Default::default()
@@ -104,7 +104,7 @@ mod tests {
         let result = engine
             .evaluate(
                 "export function run(a: number, b: number): number { return a + b; }",
-                &vec![json!(40), json!(2)],
+                &[json!(40), json!(2)],
                 SandboxConfig {
                     mode: EvaluateMode::ModuleMethod("run".into()),
                     strip_typescript_types: true,
@@ -131,13 +131,13 @@ mod tests {
         let engine = SandboxEngine::new().unwrap();
         let code = "import * as ft from 'https://unpkg.com/funtypes@5.1.2/lib/index.mjs'; export function run(input: string): number { const result = ft.Array(ft.String).safeParse(JSON.parse(input)); return result.success ? result : { success: false, reason: ft.showError(result) };}";
         let result = engine
-            .evaluate(code, &vec![json!("[\"a\", \"b\", \"c\"]")], config.clone())
+            .evaluate(code, &[json!("[\"a\", \"b\", \"c\"]")], config.clone())
             .await
             .result
             .unwrap();
         assert_eq!(result, json!({ "success": true, "value": ["a", "b", "c"] }));
         let result = engine
-            .evaluate(code, &vec![json!("[\"a\", 42, \"c\"]")], config)
+            .evaluate(code, &[json!("[\"a\", 42, \"c\"]")], config)
             .await
             .result
             .unwrap();
